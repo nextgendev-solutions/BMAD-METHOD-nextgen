@@ -1,0 +1,64 @@
+# Module metadata
+code: nextgen-custom
+name: "NextGen Custom Workflows"
+default_selected: false
+
+# Welcome message during installation
+prompt:
+  - "Installing NextGen Custom Workflows"
+  - "Project-specific workflows for Jira-integrated sprint management and development"
+
+# Core values automatically inherited from installer:
+## user_name
+## communication_language
+## document_output_language
+## output_folder
+## bmad_folder
+
+# PROJECT-SPECIFIC CONFIGURATION FIELDS
+
+# Jira Configuration
+jira_cloud_id:
+  prompt: "Jira Cloud ID?"
+  default: "bfeeb19d-00e7-42ae-8fe6-d1decb3d2c30"
+  result: "{value}"
+
+jira_project_key:
+  prompt: "Jira Project Key?"
+  default: "ESNG"
+  result: "{value}"
+
+jira_board_id:
+  prompt: "Jira Board ID?"
+  default: "100"
+  result: "{value}"
+
+# Git Configuration
+git_main_branch:
+  prompt: "Main branch name?"
+  default: "main"
+  result: "{value}"
+
+git_sprint_branch_prefix:
+  prompt: "Sprint branch prefix?"
+  default: "sprint/"
+  result: "{value}"
+
+# Sprint artifacts location
+sprint_artifacts:
+  prompt: "Sprint artifacts folder?"
+  default: ".bmad/sprint"
+  result: "{project-root}/{value}"
+
+# Confluence Configuration (optional)
+confluence_space_key:
+  prompt: "Confluence space key? (optional)"
+  default: "EN"
+  result: "{value}"
+
+# STATIC CONFIGURATION (no prompts)
+module_version:
+  result: "1.0.0"
+
+parent_config:
+  result: "{project-root}/bmad/bmm/config.yaml"
