@@ -1,0 +1,39 @@
+name: start-sprint
+description: "Start Jira sprint and create sprint branch for isolated development cycle (eSIM NextGen)"
+author: "KA"
+version: "2.0.0"
+
+# Critical variables from config
+config_source: "{project-root}/bmad/nextgen-custom/config.yaml"
+output_folder: "{config_source}:output_folder"
+user_name: "{config_source}:user_name"
+communication_language: "{config_source}:communication_language"
+date: system-generated
+
+# Installed path
+installed_path: "{project-root}/bmad/nextgen-custom/workflows/start-sprint"
+instructions: "{installed_path}/instructions.md"
+
+# Workflow settings
+template: false
+standalone: true
+
+# Variables
+variables:
+  # Jira configuration (from config)
+  jira_cloud_id: "{config_source}:jira_cloud_id"
+  jira_project_key: "{config_source}:jira_project_key"
+  jira_board_id: "{config_source}:jira_board_id"
+
+  # Runtime variables (extracted during workflow)
+  sprint_id: "runtime"
+  sprint_number: "runtime"
+  sprint_goal: "runtime"
+  sprint_name: "runtime"
+  sprint_branch: "runtime"
+  sprint_tickets: "runtime"
+
+  # Git configuration
+  git_main_branch: "{config_source}:git_main_branch"
+  git_sprint_branch_prefix: "{config_source}:git_sprint_branch_prefix"
+  sprint_artifacts: "{config_source}:sprint_artifacts"
