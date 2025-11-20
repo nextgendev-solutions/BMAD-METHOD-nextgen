@@ -1,0 +1,40 @@
+name: confluence-pull-docs
+description: "Fetch Confluence pages and save locally as markdown"
+version: "1.0.0"
+
+config_source: "{project-root}/bmad/nextgen-custom/config.yaml"
+installed_path: "{project-root}/bmad/nextgen-custom/workflows/confluence-pull-docs"
+instructions: "{installed_path}/instructions.md"
+
+template: false
+
+variables:
+  # Config imports
+  jira_cloud_id: "{config_source}:jira_cloud_id"
+  confluence_space_key: "{config_source}:confluence_space_key"
+  user_name: "{config_source}:user_name"
+  communication_language: "{config_source}:communication_language"
+
+  # Runtime variables
+  confluence_space: "runtime"
+  page_ids: "runtime"
+  output_directory: "runtime"
+  fetched_pages: "runtime"
+
+# Checkpoint configuration
+checkpoints:
+  frequency: "per_page"
+
+# Recovery configuration
+recovery:
+  enabled: true
+  verify_jira: false
+  prompt_user: true
+
+# Success criteria
+success_criteria:
+  - "Confluence space identified"
+  - "Page IDs specified or discovered"
+  - "All pages fetched successfully"
+  - "Pages converted to markdown format"
+  - "Saved to output directory"

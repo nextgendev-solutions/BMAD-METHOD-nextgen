@@ -1,0 +1,28 @@
+name: reject-issue
+description: "Reject story and move back to backlog with feedback"
+version: "1.0.0"
+
+config_source: "{project-root}/bmad/nextgen-custom/config.yaml"
+installed_path: "{project-root}/bmad/nextgen-custom/workflows/reject-issue"
+instructions: "{installed_path}/instructions.md"
+
+template: false
+
+variables:
+  # Config imports
+  jira_cloud_id: "{config_source}:jira_cloud_id"
+  jira_project_key: "{config_source}:jira_project_key"
+  user_name: "{config_source}:user_name"
+  communication_language: "{config_source}:communication_language"
+
+  # Runtime variables
+  issue_key: "runtime"
+  rejection_reason: "runtime"
+
+# Success criteria
+success_criteria:
+  - "Issue key identified"
+  - "Rejection reason collected"
+  - "Issue moved to backlog"
+  - "Feedback comment added to Jira"
+  - "Stakeholders notified"
