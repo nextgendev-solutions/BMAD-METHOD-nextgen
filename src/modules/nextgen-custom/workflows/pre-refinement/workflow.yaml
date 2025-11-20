@@ -1,0 +1,50 @@
+name: pre-refinement
+description: "Interactive epic-based pre-refinement with Product Owner participation, epic validation, and ticket alignment"
+version: "1.0.0"
+
+config_source: "{project-root}/bmad/nextgen-custom/config.yaml"
+installed_path: "{project-root}/bmad/nextgen-custom/workflows/pre-refinement"
+instructions: "{installed_path}/instructions.md"
+
+template: false
+
+variables:
+  # Config imports
+  jira_cloud_id: "{config_source}:jira_cloud_id"
+  jira_project_key: "{config_source}:jira_project_key"
+  jira_board_id: "{config_source}:jira_board_id"
+  confluence_space_key: "{config_source}:confluence_space_key"
+  git_main_branch: "{config_source}:git_main_branch"
+  user_name: "{config_source}:user_name"
+  communication_language: "{config_source}:communication_language"
+
+  # Runtime variables - workflow inputs
+  input_type: "runtime"
+  epic_key: "runtime"
+  manual_ticket_keys: "runtime"
+
+  # Runtime variables - workflow state
+  selected_tickets: "runtime"
+  current_ticket_index: "runtime"
+  refined_tickets: "runtime"
+  confluence_docs: "runtime"
+  epic_validated: "runtime"
+  epic_adjusted: "runtime"
+  tickets_aligned: "runtime"
+  tickets_cancelled: "runtime"
+  tickets_created: "runtime"
+  tickets_updated: "runtime"
+  priority_changes: "runtime"
+  po_decisions: "runtime"
+  design_assets_prepared: "runtime"
+  sally_review_complete: "runtime"
+  design_gaps_found: "runtime"
+  design_assets_created: "runtime"
+  ux_issues_found: "runtime"
+  ux_fixes_applied: "runtime"
+  design_consistency_validated: "runtime"
+  design_sign_off: "runtime"
+  mentions_found: "runtime"
+  mention_responses: "runtime"
+  playwright_screenshots_captured: "runtime"
+  prototype_validation_results: "runtime"

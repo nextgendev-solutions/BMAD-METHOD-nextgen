@@ -1,0 +1,51 @@
+name: sprint-planning
+description: "Orchestrate comprehensive sprint planning with checkpoint recovery"
+version: "1.0.0"
+
+config_source: "{project-root}/bmad/nextgen-custom/config.yaml"
+installed_path: "{project-root}/bmad/nextgen-custom/workflows/sprint-planning"
+instructions: "{installed_path}/instructions.md"
+
+template: false
+
+variables:
+  # Config imports
+  jira_cloud_id: "{config_source}:jira_cloud_id"
+  jira_project_key: "{config_source}:jira_project_key"
+  jira_board_id: "{config_source}:jira_board_id"
+  user_name: "{config_source}:user_name"
+  communication_language: "{config_source}:communication_language"
+
+  # Runtime variables
+  sprint_number: "runtime"
+  selected_tickets: "runtime"
+  current_ticket_index: "runtime"
+  completed_tickets: "runtime"
+  user_account_id: "runtime"
+  user_display_name: "runtime"
+  sprint_goal: "runtime"
+  total_story_points: "runtime"
+  gherkin_scenarios: "runtime"
+
+# Gherkin configuration
+gherkin:
+  enabled: true
+  format: "standard"
+  scenarios_per_ticket: 5
+  quality_requirements:
+    - "Each scenario must be testable and automatable"
+    - "Use specific, concrete conditions (avoid vague terms)"
+    - "Include both technical and business acceptance criteria"
+    - "Reference actual file paths, module names, commands"
+    - "Align with project architecture (reactive patterns, KMP structure)"
+
+# Success criteria
+success_criteria:
+  - "All selected tickets have Gherkin acceptance criteria"
+  - "All selected tickets have 3 checklists in description"
+  - "All UI tickets have design assets attached"
+  - "All tickets have story points assigned"
+  - "Dependencies marked for all tickets"
+  - "Sprint created in Jira with all tickets"
+  - "Sprint goal set"
+  - "Sprint kickoff summary presented"

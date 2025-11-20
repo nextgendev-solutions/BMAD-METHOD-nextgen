@@ -1,0 +1,49 @@
+name: close-sprint
+description: "Complete sprint, create PR to main, prepare for next sprint"
+version: "1.0.0"
+
+config_source: "{project-root}/bmad/nextgen-custom/config.yaml"
+installed_path: "{project-root}/bmad/nextgen-custom/workflows/close-sprint"
+instructions: "{installed_path}/instructions.md"
+
+template: false
+
+variables:
+  # Config imports
+  jira_cloud_id: "{config_source}:jira_cloud_id"
+  jira_project_key: "{config_source}:jira_project_key"
+  user_name: "{config_source}:user_name"
+  communication_language: "{config_source}:communication_language"
+
+  # Runtime variables
+  sprint_number: "runtime"
+  incomplete_stories: "runtime"
+  sprint_branch: "runtime"
+  pr_url: "runtime"
+
+# Execution configuration
+execution:
+  mode: "autonomous"
+  auto_continue: true
+  skip_file_output: true
+
+# Checkpoint configuration
+checkpoints:
+  frequency: "per_phase"
+  on_error: "save_and_prompt"
+
+# Recovery configuration
+recovery:
+  enabled: true
+  verify_jira: true
+  verify_git: true
+  prompt_user: true
+
+# Success criteria
+success_criteria:
+  - "Sprint completion verified in Jira"
+  - "All complete stories identified"
+  - "Incomplete stories handled (moved to backlog or next sprint)"
+  - "PR created to main branch for review"
+  - "Sprint closure summary generated"
+  - "Ready for retrospective workflow"

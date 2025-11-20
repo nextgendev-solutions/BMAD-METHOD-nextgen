@@ -1,0 +1,44 @@
+name: retrospective
+description: "Generate sprint retrospective with metrics, feedback, and action items"
+version: "1.0.0"
+
+config_source: "{project-root}/bmad/nextgen-custom/config.yaml"
+installed_path: "{project-root}/bmad/nextgen-custom/workflows/retrospective"
+instructions: "{installed_path}/instructions.md"
+
+template: true
+default_output_file: "{output_folder}/retrospective-sprint-{sprint_number}-{date:YYYY-MM-DD}.md"
+
+variables:
+  # Config imports
+  jira_cloud_id: "{config_source}:jira_cloud_id"
+  jira_project_key: "{config_source}:jira_project_key"
+  confluence_space_key: "{config_source}:confluence_space_key"
+  user_name: "{config_source}:user_name"
+  communication_language: "{config_source}:communication_language"
+
+  # Runtime variables
+  sprint_number: "runtime"
+  sprint_stories: "runtime"
+  completed_count: "runtime"
+  total_story_points: "runtime"
+  feedback_collected: "runtime"
+
+# Checkpoint configuration
+checkpoints:
+  frequency: "per_phase"
+  on_error: "save_and_prompt"
+
+# Recovery configuration
+recovery:
+  enabled: true
+  verify_jira: false
+  prompt_user: true
+
+# Success criteria
+success_criteria:
+  - "Sprint metrics gathered from Jira"
+  - "Team feedback collected via party-mode"
+  - "Retrospective document generated"
+  - "Action items created in Jira"
+  - "Retrospective published to Confluence"
