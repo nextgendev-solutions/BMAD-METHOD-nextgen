@@ -1,0 +1,63 @@
+name: continue-current-sprint
+description: "Resume active sprint by picking next story and executing implementation with runtime verification"
+version: "1.1.0"
+
+config_source: "{project-root}/bmad/nextgen-custom/config.yaml"
+installed_path: "{project-root}/bmad/nextgen-custom/workflows/continue-current-sprint"
+instructions: "{installed_path}/instructions.md"
+
+template: false
+
+variables:
+  # Config imports
+  jira_cloud_id: "{config_source}:jira_cloud_id"
+  jira_project_key: "{config_source}:jira_project_key"
+  jira_board_id: "{config_source}:jira_board_id"
+  user_name: "{config_source}:user_name"
+  communication_language: "{config_source}:communication_language"
+
+  # Runtime variables
+  active_sprint_number: "runtime"
+  active_sprint_goal: "runtime"
+  available_stories: "runtime"
+  selected_story: "runtime"
+  selected_story_details: "runtime"
+  bug_analysis_agent: "runtime"
+  bug_analysis_report: "runtime"
+  runtime_commands: "runtime"
+  party_mode_required: "runtime"
+  party_mode_reason: "runtime"
+  runtime_evidence: "runtime"
+  runtime_failure_notes: "runtime"
+  completed_stories: "runtime"
+  continue_loop: "runtime"
+
+# Execution configuration
+execution:
+  mode: "autonomous"
+  auto_continue: true
+  skip_file_output: true
+
+# Checkpoint configuration
+checkpoints:
+  frequency: "per_story"
+  on_error: "save_and_prompt"
+  on_context_warning: "auto_compact"
+
+# Recovery configuration
+recovery:
+  enabled: true
+  verify_jira: true
+  prompt_user: true
+  verification_queries:
+    - field: "status"
+      in: ["Done", "In Review", "In Test"]
+
+# Success criteria
+success_criteria:
+  - "Active sprint identified with stories available"
+  - "Story selected for implementation"
+  - "Execution context prepared (bug analysis if needed)"
+  - "Story implementation cycle delegated to story-implementation workflow"
+  - "Runtime verification evidence uploaded to Jira"
+  - "Loop continues until all stories complete"

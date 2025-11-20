@@ -1,0 +1,36 @@
+name: backlog-refinement
+description: "Refine top backlog items with complete details, checklists, and mark Ready-for-Sprint"
+version: "1.0.0"
+
+config_source: "{project-root}/bmad/nextgen-custom/config.yaml"
+installed_path: "{project-root}/bmad/nextgen-custom/workflows/backlog-refinement"
+instructions: "{installed_path}/instructions.md"
+
+template: false
+
+variables:
+  # Config imports
+  jira_cloud_id: "{config_source}:jira_cloud_id"
+  jira_project_key: "{config_source}:jira_project_key"
+  jira_board_id: "{config_source}:jira_board_id"
+  confluence_space_key: "{config_source}:confluence_space_key"
+  user_name: "{config_source}:user_name"
+  communication_language: "{config_source}:communication_language"
+
+  # Runtime variables
+  max_tickets: "runtime"
+  selected_tickets: "runtime"
+  current_ticket_index: "runtime"
+  refined_tickets: "runtime"
+  mentions_found: "runtime"
+  mention_responses: "runtime"
+  sally_review_complete: "runtime"
+  design_assets_prepared: "runtime"
+  ux_issues_found: "runtime"
+  ux_fixes_applied: "runtime"
+  design_consistency_validated: "runtime"
+  design_sign_off: "runtime"
+  design_blocked_tickets: "runtime"
+  refinement_path: "runtime"
+  playwright_screenshots_captured: "runtime"
+  prototype_validation_results: "runtime"

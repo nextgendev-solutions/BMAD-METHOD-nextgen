@@ -1,0 +1,90 @@
+name: story-implementation
+description: "Complete dev → code review → QA → merge cycle for a single Jira story"
+version: "1.0.0"
+
+config_source: "{project-root}/bmad/nextgen-custom/config.yaml"
+installed_path: "{project-root}/bmad/nextgen-custom/workflows/story-implementation"
+instructions: "{installed_path}/instructions.md"
+
+template: false
+
+variables:
+  # Config imports
+  jira_cloud_id: "{config_source}:jira_cloud_id"
+  jira_project_key: "{config_source}:jira_project_key"
+  user_name: "{config_source}:user_name"
+  communication_language: "{config_source}:communication_language"
+
+  # Runtime variables
+  story_key: "runtime"
+  sprint_number: "runtime"
+  sprint_branch: "runtime"
+  feature_branch: "runtime"
+  story_labels: "runtime"
+  runtime_commands: "runtime"
+  bug_analysis_report: "runtime"
+  party_mode_required: "runtime"
+  developer_agent: "runtime"
+  architect_agent: "runtime"
+  pair_programming_required: "runtime"
+  current_phase: "runtime"
+  current_status: "runtime"
+  review_result: "runtime"
+  qa_result: "runtime"
+  iteration_count: "runtime"
+  blocking_issues: "runtime"
+
+# State machine transitions
+state_machine:
+  initial: "start"
+  states:
+    start:
+      next: "dev"
+      jira_status: "In Progress"
+    dev:
+      next: "review"
+      jira_status: "In Review"
+      rejection_target: "dev"
+    review:
+      approved: "qa"
+      rejected: "dev"
+      jira_status: "In Review"
+    qa:
+      pass: "merge"
+      fail: "dev"
+      jira_status: "In Test"
+    merge:
+      next: "complete"
+      jira_status: "Done"
+    complete:
+      final: true
+
+# Checkpoint configuration
+checkpoints:
+  frequency: "per_phase"
+  on_error: "save_and_prompt"
+  on_context_warning: "auto_compact"
+  save_on_rejection: true
+
+# Recovery configuration
+recovery:
+  enabled: true
+  verify_jira: true
+  verify_git: true
+  prompt_user: true
+  verification_queries:
+    - field: "status"
+      value: "{current_status}"
+    - git_branch_exists: "{feature_branch}"
+
+# Success criteria
+success_criteria:
+  - "Story fetched from Jira with all context"
+  - "Dependencies validated (no blockers)"
+  - "Feature branch created in Git"
+  - "Story moved to In Progress in Jira"
+  - "Development implementation complete (all checklists marked)"
+  - "Code review APPROVED (all checklists marked)"
+  - "QA validation PASS (all checklists marked)"
+  - "Changes merged to sprint branch via git-manager"
+  - "Story moved to Done in Jira"
