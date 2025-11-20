@@ -1,0 +1,46 @@
+name: create-jira
+description: "Unified workflow for creating any Jira issue (Bug/Task/Story) with intelligent routing"
+version: "1.0.0"
+
+config_source: "{project-root}/bmad/nextgen-custom/config.yaml"
+installed_path: "{project-root}/bmad/nextgen-custom/workflows/create-jira"
+instructions: "{installed_path}/instructions.md"
+
+template: false
+
+variables:
+  # Config imports
+  jira_cloud_id: "{config_source}:jira_cloud_id"
+  jira_project_key: "{config_source}:jira_project_key"
+  user_name: "{config_source}:user_name"
+  communication_language: "{config_source}:communication_language"
+
+  # Runtime variables (collected interactively)
+  issue_title: "runtime"
+  issue_type: "runtime"
+  bug_observed: "runtime"
+  bug_expected: "runtime"
+  task_story_outcome: "runtime"
+  task_story_value: "runtime"
+  location_in_app: "runtime"
+  platform: "runtime"
+  priority: "runtime"
+  impact: "runtime"
+  device_info: "runtime"
+  screenshots_attached: "runtime"
+  logs_attached: "runtime"
+  additional_labels_raw: "runtime"
+  extra_labels: "runtime"
+  is_urgent: "runtime"
+  start_immediately: "runtime"
+  acceptance_criteria: "runtime"
+  created_issue_key: "runtime"
+
+# Success criteria
+success_criteria:
+  - "Issue type selected (Bug/Task/Story)"
+  - "All required details collected"
+  - "Platform and priority set"
+  - "Issue created in Jira"
+  - "Routed to correct location (backlog or current sprint)"
+  - "Labels applied correctly"
