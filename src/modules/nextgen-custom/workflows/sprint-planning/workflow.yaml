@@ -1,6 +1,6 @@
 name: sprint-planning
-description: "Orchestrate comprehensive sprint planning with checkpoint recovery"
-version: "1.0.0"
+description: "Sprint planning with clean ticket verification - ACs arrive from backlog refinement"
+version: "1.1.0"
 
 config_source: "{project-root}/bmad/nextgen-custom/config.yaml"
 installed_path: "{project-root}/bmad/nextgen-custom/workflows/sprint-planning"
@@ -25,23 +25,10 @@ variables:
   user_display_name: "runtime"
   sprint_goal: "runtime"
   total_story_points: "runtime"
-  gherkin_scenarios: "runtime"
-
-# Gherkin configuration
-gherkin:
-  enabled: true
-  format: "standard"
-  scenarios_per_ticket: 5
-  quality_requirements:
-    - "Each scenario must be testable and automatable"
-    - "Use specific, concrete conditions (avoid vague terms)"
-    - "Include both technical and business acceptance criteria"
-    - "Reference actual file paths, module names, commands"
-    - "Align with project architecture (reactive patterns, KMP structure)"
 
 # Success criteria
 success_criteria:
-  - "All selected tickets have Gherkin acceptance criteria"
+  - "All tickets verified to have Gherkin acceptance criteria (from backlog refinement)"
   - "All selected tickets have 3 checklists in description"
   - "All UI tickets have design assets attached"
   - "All tickets have story points assigned"

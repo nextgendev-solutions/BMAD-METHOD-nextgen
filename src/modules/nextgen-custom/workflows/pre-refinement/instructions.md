@@ -8,11 +8,85 @@
 
 ---
 
+## State File Management
+
+**State Folder**: `.bmad/state/pre-refinement-{session_id}/`
+
+<action>
+**At workflow start, create state folder and initialize state.json**:
+
+```bash
+# Generate session ID (timestamp-based)
+SESSION_ID=$(date +%Y%m%d-%H%M%S)
+STATE_DIR=".bmad/state/pre-refinement-${SESSION_ID}"
+
+# Create state folder
+mkdir -p "${STATE_DIR}"
+
+# Initialize state.json
+cat > "${STATE_DIR}/state.json" << 'EOF'
+{
+  "workflow": "pre-refinement",
+  "session_id": "${SESSION_ID}",
+  "started_at": "$(date -Iseconds)",
+  "status": "in_progress",
+  "input_type": null,
+  "epic_key": null,
+  "selected_tickets": [],
+  "refined_tickets": [],
+  "current_ticket_index": 0,
+  "cache_dir": "${STATE_DIR}"
+}
+EOF
+```
+
+Store `{state_dir}` = "${STATE_DIR}" for use throughout workflow.
+Store `{state_file}` = "${STATE_DIR}/state.json" for recovery.
+</action>
+
 ## Recovery Protocol
 
 <check if="state_file_exists">
-  <action>Load state → Verify pre-refined tickets in Jira → Prompt user to resume</action>
-</check>
+  <action>
+  **Recovery from previous session**:
+
+1. Scan `.bmad/state/pre-refinement-*/state.json` for sessions with `status: "in_progress"`
+2. Load most recent state file → Parse JSON
+3. Verify pre-refined tickets in Jira → Compare with `refined_tickets` array
+4. Prompt user: "Found incomplete session from {started_at}. Resume? (yes/no)"
+5. If yes → Set `{state_dir}` and `{state_file}` from recovered session
+6. If no → Create new session (run State File Management above)
+   </action>
+   </check>
+
+---
+
+<step n="0" goal="Initialize Story Type Tracking">
+
+<action>Communicate in {communication_language} with {user_name}</action>
+
+**Purpose**: Initialize story type tracking system for routing stories to appropriate coordination workflows.
+
+<action>
+**Initialize Story Types Dictionary**:
+- Create empty dictionary: {story_types} = {}
+- This will store story type for each ticket (backend/frontend/full-stack)
+- Populated during ticket selection (Step 2 or Step 2.4)
+</action>
+
+<template-output section="story_type_system_initialized">
+## 📊 Story Type System Initialized
+
+Story type tracking is now active. Each ticket will be classified as:
+
+- **Backend** (BE label only)
+- **Frontend** (UI/Shared/Platform labels only)
+- **Full-Stack** (BE + UI/Shared/Platform labels)
+
+This enables strategic coordination for full-stack stories.
+</template-output>
+
+</step>
 
 ---
 
@@ -24,7 +98,13 @@
 
 <action>Store in {input_type}</action>
 
-<note>Save state: input_type</note>
+<action>
+**Update state.json**:
+```bash
+jq '.input_type = $type' --arg type "{input_type}" \
+  "{state_file}" > "{state_file}.tmp" && mv "{state_file}.tmp" "{state_file}"
+```
+</action>
 
 </step>
 
@@ -111,7 +191,16 @@ Store results in: {confluence_docs}
   </check>
 </check>
 
-<note>Save state: epic_key, epic_description, confluence_docs</note>
+<action>
+**Update state.json with epic context**:
+```bash
+jq '.epic_key = $epic | .epic_description = $desc | .confluence_docs_count = $docs_count' \
+  --arg epic "{epic_key}" \
+  --arg desc "{epic_description}" \
+  --argjson docs_count '{{confluence_docs.length}}' \
+  "{state_file}" > "{state_file}.tmp" && mv "{state_file}.tmp" "{state_file}"
+```
+</action>
 
 </step>
 
@@ -155,7 +244,8 @@ Execute party-mode epic review session:
 
 - Product Owner (KA) - **ACTIVE PARTICIPANT**
 - Product Manager - Asks PO about business value, validates scope
-- Architect - Reviews technical constraints, architecture alignment
+- **Spring Senior Architect (spring-senior-architect) - Reviews backend constraints, reactive patterns, MongoDB design**
+- **KMP Senior Architect (kmp-senior-architect) - Reviews KMP/Compose constraints, platform patterns, expect/actual design**
 - Backend Dev (spring-webflux-kotlin-dev) - Identifies technical implications
 - KMP Dev (kmp-flow-dev) - Identifies shared/UI implications
 - Code Reviewer - Identifies architectural concerns
@@ -185,7 +275,13 @@ Execute party-mode epic review session:
 
 <action>Store in {epic_validated}</action>
 
-<note>Save state: epic_validated</note>
+<action>
+**Update state.json**:
+```bash
+jq '.epic_validated = $validated' --argjson validated '{epic_validated}' \
+  "{state_file}" > "{state_file}.tmp" && mv "{state_file}.tmp" "{state_file}"
+```
+</action>
 
 ### 3.3: Epic Misalignment Resolution (if epic_validated == false)
 
@@ -284,7 +380,16 @@ BMad Master summarizes final adjusted requirements
     <action>Set {epic_adjusted} = true</action>
     <action>Set {epic_validated} = true</action>
 
-    <note>Save state: epic_adjusted, epic_validated, corrected_requirements</note>
+    <action>
+    **Update state.json with epic adjustment**:
+    ```bash
+    jq '.epic_adjusted = $adjusted | .epic_validated = $validated | .corrected_requirements = $reqs' \
+      --argjson adjusted '{epic_adjusted}' \
+      --argjson validated '{epic_validated}' \
+      --arg reqs "{corrected_requirements}" \
+      "{state_file}" > "{state_file}.tmp" && mv "{state_file}.tmp" "{state_file}"
+    ```
+    </action>
 
     <template-output section="epic_adjusted">
 
@@ -334,10 +439,17 @@ Found {{child_tickets.length}} child tickets:
 
 - Priority: {{this.priority}}
 - Status: {{this.status}}
-  {{/each}}
-  </template-output>
+{{/each}}
+</template-output>
 
-<note>Save state: child_tickets</note>
+  <action>
+  **Update state.json with child tickets**:
+  ```bash
+  jq '.child_tickets = $tickets' \
+    --argjson tickets '[{{#each child_tickets}}"{{this.key}}"{{#unless @last}},{{/unless}}{{/each}}]' \
+    "{state_file}" > "{state_file}.tmp" && mv "{state_file}.tmp" "{state_file}"
+  ```
+  </action>
 </check>
 
 </step>
@@ -472,7 +584,17 @@ Proceeding with aligned ticket set...
     Store updated list in {child_tickets}
     </action>
 
-    <note>Save state: tickets_aligned, tickets_cancelled, tickets_updated, tickets_created, child_tickets</note>
+    <action>
+    **Update state.json with alignment results**:
+    ```bash
+    jq '.tickets_aligned = $aligned | .tickets_cancelled = $cancelled | .tickets_updated = $updated | .tickets_created = $created' \
+      --argjson aligned '{tickets_aligned}' \
+      --argjson cancelled '{tickets_cancelled}' \
+      --argjson updated '{tickets_updated}' \
+      --argjson created '{tickets_created}' \
+      "{state_file}" > "{state_file}.tmp" && mv "{state_file}.tmp" "{state_file}"
+    ```
+    </action>
 
   </check>
 </check>
@@ -505,195 +627,539 @@ Proceeding with aligned ticket set...
 Store results in {selected_tickets}
 </action>
 
-<note>Save state: manual_ticket_keys, selected_tickets</note>
+  <action>
+  **Update state.json with manual tickets**:
+  ```bash
+  jq '.selected_tickets = $tickets' \
+    --argjson tickets '[{{#each manual_ticket_keys}}"{{this}}"{{#unless @last}},{{/unless}}{{/each}}]' \
+    "{state_file}" > "{state_file}.tmp" && mv "{state_file}.tmp" "{state_file}"
+  ```
+  </action>
 </check>
 
 </step>
 
 ---
 
-<step n="5A" goal="UI/UX Design Validation (MANDATORY for ALL Stories)">
+<step n="2.5" goal="Ensure All Tickets Are Labeled">
 
 <action>Communicate in {communication_language} with {user_name}</action>
 
-**Duration**: 5-20 minutes (varies by story type)
+**Purpose**: Auto-label unlabeled tickets BEFORE party-mode to ensure correct agent selection
 
 <action>
-**BMad-Master delegates to ux-exprt (Sally)**: Validate UX and manage design assets **ONLY IF REQUIRED**
+For each ticket in {selected_tickets} or {child_tickets}:
+  - Check if {ticket_labels} contains any of: BE, Shared, Platform, UI
+  - If NO labels found → Trigger label analysis
+</action>
+
+<check if="unlabeled_tickets.length > 0">
+  <template-output section="unlabeled_tickets_detected">
+## 🏷️ Unlabeled Tickets Detected
+
+Found {{unlabeled_tickets.length}} tickets without labels. Auto-labeling based on content...
+</template-output>
+
+  <action>
+  **Label Analysis Process** (for each unlabeled ticket):
+
+**Step 1: Parse ticket summary and description**
+
+- Extract keywords from {ticket_summary} and {ticket_description}
+
+**Step 2: Detect labels based on keywords**:
+
+- Keywords: Backend, API, Service, Repository, Database, MongoDB, WebFlux, Reactive → Apply label: **"BE"**
+- Keywords: Shared, KMP, Platform, expect, actual, multiplatform → Apply label: **"Shared"**
+- Keywords: UI, Screen, View, Compose, Interface, Button, Dialog, Modal, Layout → Apply label: **"UI"**
+- Keywords: Contract, DTO, Request, Response (without BE context) → Apply label: **"Shared"**
+
+**Step 3: Apply label via jira-manager**
+**BMad-Master delegates to jira-manager**: Edit Jira issue
+
+**Agent**: jira-manager (`~/.claude/agents/jira-manager.md`)
+
+**Operation**: editJiraIssue
+
+**Parameters**:
+
+- cloudId: "{jira_cloud_id}"
+- issueIdOrKey: "{ticket_key}"
+- update:
+  - labels: [{ add: "{detected_label}" }]
+
+**Step 4: Store label decision**
+
+- Store in {auto_labeled_tickets}:
+  ```
+  {
+    ticket_key: "{ticket_key}",
+    detected_labels: ["{detected_label}"],
+    detection_reason: "Keywords found: {keywords}",
+    summary: "{ticket_summary}"
+  }
+  ```
+
+**Step 5: Log decision**
+
+- Log: "Auto-labeled {{ticket_key}} as {{detected_labels}} (Reason: {{detection_reason}})"
+  </action>
+
+  <template-output section="labeling_report">
+
+## 🏷️ Ticket Labeling Report
+
+{{#each auto_labeled_tickets}}
+
+- **{{this.ticket_key}}**: Auto-labeled as `{{this.detected_labels}}`
+  - Summary: {{this.summary}}
+  - Reason: {{this.detection_reason}}
+    {{/each}}
+
+All tickets now have appropriate labels for correct agent selection.
+</template-output>
+
+  <action>
+  **Update state.json with labeling results**:
+  ```bash
+  jq '.auto_labeled_tickets = $labeled' \
+    --argjson labeled '{auto_labeled_tickets}' \
+    "{state_file}" > "{state_file}.tmp" && mv "{state_file}.tmp" "{state_file}"
+  ```
+  </action>
+</check>
+
+<check if="unlabeled_tickets.length == 0">
+  <template-output section="all_tickets_labeled">
+✅ All tickets have labels - no auto-labeling needed.
+  </template-output>
+</check>
+
+</step>
+
+---
+
+<step n="2.6" goal="Detect Story Types">
+
+<action>Communicate in {communication_language} with {user_name}</action>
+
+**Purpose**: Classify each ticket as backend/frontend/full-stack to route to appropriate coordination workflow
+
+<action>
+**Story Type Detection Logic** (for each ticket in {selected_tickets} or {child_tickets}):
+
+**Step 1: Analyze ticket labels**
+
+- Get labels from ticket (after Step 2.5 labeling)
+- Extract relevant labels: BE, UI, Shared, Platform
+
+**Step 2: Classify story type**:
+
+```
+IF labels contain "BE" AND labels contain ANY OF ("UI", "Shared", "Platform"):
+  → story_type = "full-stack"
+ELSE IF labels contain "BE" only:
+  → story_type = "backend"
+ELSE IF labels contain ANY OF ("UI", "Shared", "Platform"):
+  → story_type = "frontend"
+ELSE:
+  → story_type = "unknown" (should not happen after Step 2.5)
+```
+
+**Step 3: Store story type**:
+
+- Store in {story_types[ticket_key]} = story_type
+- Example: {story_types["ESNG-123"]} = "full-stack"
+
+**Step 4: Count by type** (for reporting):
+
+- backend_count = count of "backend" stories
+- frontend_count = count of "frontend" stories
+- full_stack_count = count of "full-stack" stories
+  </action>
+
+<template-output section="story_type_classification">
+## 📊 Story Type Classification Complete
+
+{{#each story_types}}
+
+- **{{@key}}**: {{this}} story
+  {{/each}}
+
+**Summary**:
+
+- Backend stories: {{backend_count}}
+- Frontend stories: {{frontend_count}}
+- **Full-stack stories: {{full_stack_count}}** ⚠️ (requires dual-agent coordination)
+
+{{#if full_stack_count > 0}}
+⚡ Full-stack stories detected - Strategic feasibility checks will be performed (Step 7.1aa)
+{{/if}}
+</template-output>
+
+<action>
+**Update state.json with story types**:
+```bash
+jq '.story_types = $types' \
+  --argjson types '{story_types}' \
+  "{state_file}" > "{state_file}.tmp" && mv "{state_file}.tmp" "{state_file}"
+```
+</action>
+
+</step>
+
+---
+
+<step n="5A" goal="UI/UX Wireframe Validation (Lightweight - Pre-Refinement Level)">
+
+<action>Communicate in {communication_language} with {user_name}</action>
+
+**Duration**: 5 minutes (ALL story types)
+
+**Purpose**: Lightweight validation - check if design assets exist, attach screenshot, flag if design-pending. Defer detailed component specs to backlog refinement.
+
+<action>
+**BMad-Master delegates to ux-exprt (Sally)**: Lightweight wireframe check (5 min)
 
 **Agent**: bmad:bmm:agents:ux-exprt
 
-**Sally's Workflow by Story Type**:
+**Sally's Simplified Pre-Refinement Workflow** (ALL Stories - 5 min):
 
-### For Stories with "Screen", "Interface", "View", "Modal", "Dialog", "Form", "Button", "Menu" in Title:
+**Step 1: Check if Design Assets Exist**
 
-**DEEP REVIEW WITH CONDITIONAL DESIGN ASSET MANAGEMENT** (15-20 min):
+- Quick search `docs/design/wireframes-*.md` for story (grep by screen name)
+- Check Jira ticket for attached screenshots
 
-**Step 1: Search for Existing Designs**
-
-- Search `docs/design/wireframes-*.md` for story (grep by screen name)
-- Search `docs/design/prototypes/` for related prototype files
-- Check `docs/design/design-system.md` for component specs
-
-**Step 2A: IF DESIGNS EXIST** ✅
+**Step 2: If Designs Exist** ✅
 
 1. Locate wireframe file and line numbers (e.g., `wireframes-authentication.md:50-152`)
-2. Locate prototype file (e.g., `auth-login.html`)
-3. Extract component specifications:
-   - Dimensions (dp values)
-   - Typography (sp values, type scale)
-   - Spacing (dp increments)
-   - Colors (Material3 tokens)
-   - All interactive states (default, loading, error, success)
-4. Validate Material3 compliance
-5. Validate accessibility (touch targets ≥48dp, color contrast)
-6. **Playwright Prototype Validation** (IF prototype file exists):
-   <action>
-   **Use Playwright MCP to validate prototype implementation**:
+2. Take screenshot of wireframe section (or use existing attached screenshot)
+3. **Attach screenshot to Jira ticket** via jira-manager
+4. **Add to Jira description**:
 
-   **Step 6a: Navigate to Prototype**
-   - Use `mcp__MCP_DOCKER__browser_browser_navigate` to open prototype HTML file (file:// URL)
-   - Wait for page load with `mcp__MCP_DOCKER__browser_browser_wait_for`
+   ```markdown
+   ## Design Reference
 
-   **Step 6b: Interactive Validation**
-   - Use `mcp__MCP_DOCKER__browser_browser_snapshot` to get accessibility tree
-   - Use `mcp__MCP_DOCKER__browser_browser_click` to test button interactions
-   - Navigate through states (default → hover → pressed → loading → error → success)
-   - Verify state transitions work as documented
+   **Wireframe**: `docs/design/wireframes-[file].md:[line-start]-[line-end]`
+   **Screenshot**: See attachment
+   ```
 
-   **Step 6c: Measurements via JavaScript**
-   - Use `mcp__MCP_DOCKER__browser_browser_evaluate` to measure:
-     ```javascript
-     // Touch target validation
-     document.querySelectorAll('button, a, input').forEach((el) => {
-       const rect = el.getBoundingClientRect();
-       const isValid = rect.width >= 48 && rect.height >= 48;
-       console.log(`${el.tagName}: ${rect.width}x${rect.height} - ${isValid ? 'PASS' : 'FAIL'}`);
-     });
-     ```
-   - Check Material3 token usage:
-     ```javascript
-     // Verify CSS custom properties (Material3 tokens)
-     const computedStyle = getComputedStyle(document.documentElement);
-     const primaryColor = computedStyle.getPropertyValue('--md-sys-color-primary');
-     console.log('Material3 tokens:', primaryColor ? 'FOUND' : 'MISSING');
-     ```
-   - Validate 8dp grid spacing:
-     ```javascript
-     // Check if all margins/padding are divisible by 8
-     document.querySelectorAll('*').forEach((el) => {
-       const style = getComputedStyle(el);
-       const margins = [style.marginTop, style.marginRight, style.marginBottom, style.marginLeft];
-       margins.forEach((m, i) => {
-         const px = parseInt(m);
-         if (px % 8 !== 0) console.log(`${el.tagName}: margin ${i} = ${px}px (NOT 8dp aligned)`);
-       });
-     });
-     ```
+5. **Done** - No detailed specs needed in pre-refinement
 
-   **Step 6d: Capture Screenshot from Prototype**
-   - Use `mcp__MCP_DOCKER__browser_browser_take_screenshot` to capture screenshot from rendered UI
-   - Save to: `.playwright-mcp/{current_ticket}-prototype.png`
-   - Store result in {{playwright_screenshots_captured[current_ticket]}}
+**Step 3: If Designs Missing** ⚠️
 
-   **Step 6e: Validation Results**
-   - Store validation results in {{prototype_validation_results[current_ticket]}}:
-     ```
-     {
-       touch_targets_valid: boolean,
-       material3_tokens_valid: boolean,
-       grid_spacing_valid: boolean,
-       issues: [
-         {type: "touch_target", element: "button.submit", actual: "40x40", required: "48x48"},
-         {type: "hardcoded_color", element: ".header", actual: "#1976D2", required: "var(--md-sys-color-primary)"},
-         ...
-       ]
-     }
-     ```
+1. **Add Jira comment**: "Design assets pending - will be created during backlog refinement"
+2. **Add label**: "Design-Pending"
+3. **Done** - Continue with refinement
 
-   **IF validation issues found**:
-   - Report to Product Owner: "Prototype has {{issues.length}} issues. Fix now or mark Design-Pending?"
-   - IF fix approved: Update prototype HTML, re-run validation
-   - IF fix declined: Add "Design-Inconsistency" label, proceed
-     </action>
+**What Sally DOES NOT Do in Pre-Refinement**:
 
-7. **Take screenshot** of wireframe section (fallback if no prototype)
-8. **Attach screenshot to Jira ticket** via jira-manager (use Playwright screenshot if available)
-9. **Add to Jira description**:
-   - Wireframe file path and line numbers
-   - Prototype file path
-   - Component specs table
-   - Git links to design files
-10. **Update Confluence design page** via confluence-manager (add reference to this story)
+- ❌ NO component dimension specs (defer to backlog refinement)
+- ❌ NO typography specifications (defer to backlog refinement)
+- ❌ NO spacing specifications (defer to backlog refinement)
+- ❌ NO Material3 token validation (defer to backlog refinement)
+- ❌ NO interactive state documentation (defer to backlog refinement)
+- ❌ NO Playwright prototype validation (defer to backlog refinement)
+- ❌ NO accessibility validation (defer to backlog refinement)
+- ❌ NO design creation (defer to backlog refinement)
 
-**Step 2B: IF DESIGNS MISSING (Gap Found)** ⚠️ **CREATE ONLY IF REQUIRED**
+**Sally's Questions to PO** (Quick - 2 min):
 
-1. **Ask Product Owner**: "Design assets missing for this story. Should Sally create new wireframe/prototype? (yes/no)"
-2. **IF PO APPROVES CREATION**:
-   - **Create wireframe section** in appropriate `docs/design/wireframes-*.md` file
-   - **Create prototype** (HTML file in `docs/design/prototypes/`) if needed
-   - **Document component specs** (dimensions, typography, spacing, colors, states)
-   - **Commit to Git** via git-manager:
-     ```
-     git add docs/design/wireframes-*.md docs/design/prototypes/*.html
-     git commit -m "feat(design): Add wireframes/prototype for [STORY-KEY]"
-     git push
-     ```
-   - **Take screenshot** of new wireframe
-   - **Attach screenshot to Jira ticket** via jira-manager
-   - **Add to Jira description** (wireframe lines, prototype path, specs, Git links)
-   - **Update Confluence design page** via confluence-manager
-   - **Add comment to Jira**: "New designs created and committed to docs/design/"
-3. **IF PO DECLINES CREATION**:
-   - **Add Jira comment**: "Design assets pending - to be created later"
-   - **Add label**: "Design-Pending"
-   - **Continue with refinement** (story can proceed without designs for now)
-
-**Quality Checklist (Sally verifies - IF designs exist or created)**:
-
-- [ ] Wireframe file and line numbers documented
-- [ ] Prototype file referenced (if applicable)
-- [ ] Component dimension table in Jira description
-- [ ] Typography specifications documented
-- [ ] Spacing specifications documented
-- [ ] Color token references documented
-- [ ] All interactive states documented
-- [ ] Screenshot attached to Jira ticket
-- [ ] Git links added to Jira description
-- [ ] Confluence design page updated
-- [ ] Material3 compliance verified
-- [ ] Accessibility validated
-- [ ] **If new designs created**: Committed to Git
-
-### For BE/Shared/Platform Stories (No Screen in Title):
-
-**LIGHT REVIEW** (5 min):
-
-1. Review user-facing aspects:
-   - API error messages (clear, actionable?)
-   - Response structures (consistent, predictable?)
-   - Loading states (communicated to UI?)
-   - Edge cases (documented for UX handling?)
-2. Identify if story affects user experience
-3. Note any UX considerations in Jira description
-4. **NO design assets needed** (unless story describes user-visible error/state)
-
-**Sally's Questions to PO**:
-
-- "How does this affect the user experience?"
-- "What error messages should users see?"
-- "Are there loading states the UI needs to handle?"
-- "What edge cases impact user flow?"
-- "Do we need wireframes for error states?"
+- "Are there design assets for this story?"
+- "If missing, should we mark Design-Pending and continue?"
 
 **Agent Delegation**:
 
-- **jira-manager**: Attach screenshot, update Jira description, add comments/labels
-- **confluence-manager**: Update Confluence design page
-- **git-manager**: Commit new design files (ONLY if created and approved by PO)
+- **jira-manager**: Attach screenshot (if found), add Design-Pending label (if missing), update Jira description (wireframe reference only)
   </action>
 
-<note>Save state: sally_review_complete, design_assets_attached, confluence_updated, git_committed, design_creation_approved</note>
+<template-output section="ux_validation_complete">
+## ✅ UX Wireframe Validation Complete for {{current_ticket.key}}
+
+**Design Assets Status**: {{design_assets_found ? "Found" : "Pending"}}
+{{#if design_assets_found}}
+
+- Wireframe: {{wireframe_file_path}}
+- Screenshot attached to Jira
+  {{else}}
+- Label applied: "Design-Pending"
+- Detailed designs will be created during backlog refinement
+  {{/if}}
+
+**Deferred to Backlog Refinement**:
+
+- Component specifications (dimensions, typography, spacing, colors)
+- Material3 compliance validation
+- Accessibility validation (touch targets, contrast)
+- Interactive state documentation
+- Playwright prototype validation
+  </template-output>
+
+<action>
+**Update state.json with UX validation**:
+```bash
+jq '.ux_validation[$ticket] = {
+  "sally_review_complete": $complete,
+  "design_assets_found": $found,
+  "design_pending_label_applied": $pending
+}' --arg ticket "{current_ticket.key}" \
+   --argjson complete '{sally_review_complete}' \
+   --argjson found '{design_assets_found}' \
+   --argjson pending '{design_pending_label_applied}' \
+   "{state_file}" > "{state_file}.tmp" && mv "{state_file}.tmp" "{state_file}"
+```
+</action>
+
+### 5A.1: Full-Stack UX Coordination Check (ADDITIONAL +2 min)
+
+<check if="story_types[current_ticket.key] == 'full-stack'">
+  <template-output section="full_stack_ux_check">
+## 🔗 Additional: Full-Stack UX Coordination Check
+
+This is a full-stack story - validating end-to-end UX coordination (+2 min).
+</template-output>
+
+  <action>
+  **Sally validates end-to-end UX coordination** (HIGH-LEVEL):
+
+**1. Error Handling Coordination**:
+
+- Question: "Do backend errors map to frontend UX?"
+- Backend: 400/401/403/500 error codes defined?
+- Frontend: How does UI display these to user? (toast, dialog, inline message?)
+- Gap check: Are all backend error codes handled in frontend?
+- Answer: "Clear" OR "Unclear: {gap}"
+
+**2. Loading States Coordination**:
+
+- Question: "Do loading states coordinate across layers?"
+- Backend: API response time estimate? (< 1s, 1-3s, > 3s?)
+- Frontend: Skeleton loader, spinner, or progress bar?
+- Timeout handling: What happens if API times out?
+- Answer: "Coordinated" OR "Gap: {mismatch}"
+
+**3. Success Flow Coordination**:
+
+- Question: "Does success flow make UX sense?"
+- Backend: What data returned on success? (confirmation message, navigation target?)
+- Frontend: Where does user go after success? (same screen, navigate, close modal?)
+- User feedback: Toast message? Silent success?
+- Answer: "Clear" OR "Unclear: {navigation gap}"
+  </action>
+
+  <template-output section="full_stack_ux_coordination_result">
+
+## ✅ Full-Stack UX Coordination Result
+
+**Error Handling**: {{error_handling_coordination}}
+**Loading States**: {{loading_coordination}}
+**Success Flow**: {{success_flow_coordination}}
+
+**Overall**: {{#if ux_coordination_clear}}✅ End-to-end UX coordination feasible{{else}}⚠️ UX gaps identified - document in Preliminary Technical Notes{{/if}}
+
+**What Sally DID NOT Do** (defer to backlog refinement):
+
+- ❌ NO detailed error message copy writing
+- ❌ NO component dimension specs
+- ❌ NO Material3 token validation
+- ❌ NO Playwright prototype validation
+- ❌ NO accessibility validation
+</template-output>
+
+  <action>
+  **Update state.json with full-stack UX coordination**:
+  ```bash
+  jq '.full_stack_ux_coordination[$ticket] = $results' \
+    --arg ticket "{current_ticket.key}" \
+    --argjson results '{full_stack_ux_coordination_results[current_ticket.key]}' \
+    "{state_file}" > "{state_file}.tmp" && mv "{state_file}.tmp" "{state_file}"
+  ```
+  </action>
+</check>
+
+</step>
+
+---
+
+<step n="5B" goal="Prototype Verification (MANDATORY - Pre-Refinement Level)">
+
+<action>Communicate in {communication_language} with {user_name}</action>
+
+**Duration**: 5-10 minutes (MANDATORY for UI stories with prototypes)
+
+**Purpose**: Verify prototypes are up-to-date BEFORE applying "Pre-Refined" label
+
+<action>
+**Check if prototype file exists** for this story:
+
+**Step 1: Detect Prototype File**
+
+1. Search `docs/design/prototypes/` for files matching story screen name
+2. Check Jira description for prototype file references
+3. Check wireframe file for prototype links
+
+**Step 2: IF Prototype Found → Verify Current**
+<check if="prototype_file_exists">
+<action>
+**BMad-Master delegates to ux-exprt (Sally)**: Quick prototype verification
+
+**Agent**: bmad:bmm:agents:ux-exprt
+
+**Sally's Quick Prototype Check** (5-10 min):
+
+**Step 2a: Open Prototype with Playwright**
+
+- Use `mcp__MCP_DOCKER__browser_browser_navigate` to open prototype HTML file (file:// URL)
+- Wait for page load with `mcp__MCP_DOCKER__browser_browser_wait_for`
+
+**Step 2b: Verify Prototype Matches Current Requirements** (HIGH-LEVEL ONLY)
+
+- Use `mcp__MCP_DOCKER__browser_browser_snapshot` to get accessibility tree
+- Quick visual check: Do major components match wireframe?
+- Quick interaction check: Do primary buttons work? (click test)
+- Validate: Are all ACs represented in prototype?
+
+**Step 2c: Capture Screenshot from Prototype**
+
+- Use `mcp__MCP_DOCKER__browser_browser_take_screenshot`
+- Save to: `.playwright-mcp/{current_ticket}-prototype-pre-refined.png`
+- Compare with wireframe screenshot (visual diff check)
+
+**Step 2d: Gap Detection**
+
+- IF prototype outdated (doesn't match wireframe/ACs) → Note in {prototype_gaps_found}
+- IF prototype matches → Mark {prototype_verified} = true
+
+**What Sally DOES NOT Do** (defer to backlog refinement):
+
+- ❌ NO detailed measurements (touch targets, spacing, tokens) - quick visual only
+- ❌ NO deep interaction testing - primary flows only
+- ❌ NO JavaScript-based validation - visual scan only
+</action>
+
+  <check if="prototype_gaps_found.length > 0">
+    <ask>
+Sally found prototype is outdated for {current_ticket}:
+
+**Gaps**:
+{{#each prototype_gaps_found}}
+
+- {{this}}
+  {{/each}}
+
+**Options**:
+A) Sally updates prototype now ({estimated_fix_time} min)
+B) Add "Prototype-Outdated" label and block "Pre-Refined" until fixed
+
+Enter A or B:
+</ask>
+
+    <action>Store in {po_prototype_decision}</action>
+
+    <check if="po_prototype_decision == 'A'">
+      <action>
+      Sally updates prototype to match wireframes/ACs:
+      1. Edit HTML prototype file in `docs/design/prototypes/`
+      2. Update interactions, animations, states
+      3. Ensure prototype matches updated wireframes
+      4. Commit to Git via git-manager
+      5. Take new screenshot
+
+      Sets {prototype_verified} = true
+      </action>
+
+      <template-output>
+
+✅ **Sally updated prototype**
+
+- Prototype file: {prototype_file_path}
+- Gaps fixed: {{prototype_gaps_found.length}}
+- Git commit: {commit_hash}
+- Prototype verified: ✅
+  </template-output>
+  </check>
+
+      <check if="po_prototype_decision == 'B'">
+        <action>
+        **BMad-Master delegates to jira-manager**: Add "Prototype-Outdated" label
+
+        Operations:
+        1. Add label "Prototype-Outdated"
+        2. Add comment documenting gaps
+        3. **DO NOT add "Pre-Refined" label** (BLOCKED)
+
+        Sets {prototype_verified} = false
+        </action>
+
+        <template-output>
+
+  ⛔ **{current_ticket} BLOCKED - Prototype outdated**
+
+**Label Added**: "Prototype-Outdated"
+**Gaps**: {{prototype_gaps_found.length}} documented in Jira
+
+**CANNOT apply "Pre-Refined" label** - Prototype must be updated first
+
+Skipping to next ticket...
+</template-output>
+
+      <action>Skip to next ticket (do not apply "Pre-Refined" label)</action>
+    </check>
+
+  </check>
+
+  <check if="prototype_gaps_found.length == 0">
+    <action>
+    Set {prototype_verified} = true
+    </action>
+
+    <template-output>
+
+✅ **Prototype Verification PASSED**
+
+- Prototype file: {prototype_file_path}
+- Matches wireframes: ✅
+- Represents all ACs: ✅
+- Screenshot captured: .playwright-mcp/{current_ticket}-prototype-pre-refined.png
+  </template-output>
+  </check>
+  </check>
+
+**Step 3: IF No Prototype → Mark "Prototype-Pending"**
+<check if="!prototype_file_exists">
+<action>
+**BMad-Master delegates to jira-manager**: Add "Prototype-Pending" label
+
+Operations:
+
+1. Add label "Prototype-Pending"
+2. Add Jira comment: "Prototype not found - will be created/validated during backlog refinement"
+
+Set {prototype_verified} = "N/A" (no prototype exists yet)
+</action>
+
+  <template-output>
+ℹ️ **No prototype found** - "Prototype-Pending" label applied
+
+Prototype creation/validation deferred to backlog refinement
+</template-output>
+</check>
+</action>
+
+<action>
+**Update state.json with prototype verification**:
+```bash
+jq '.prototype_verification[$ticket] = {
+  "verified": $verified,
+  "gaps_found": $gaps,
+  "file_path": $path
+}' --arg ticket "{current_ticket.key}" \
+   --argjson verified '{prototype_verified}' \
+   --argjson gaps '{prototype_gaps_found}' \
+   --arg path "{prototype_file_path}" \
+   "{state_file}" > "{state_file}.tmp" && mv "{state_file}.tmp" "{state_file}"
+```
+</action>
 
 </step>
 
@@ -721,7 +1187,14 @@ Select tickets to refine in this session (comma-separated numbers):
 
 <action>Parse → Map to actual tickets → Store in {selected_tickets}</action>
 
-<note>Save state: selected_tickets</note>
+  <action>
+  **Update state.json with selected tickets**:
+  ```bash
+  jq '.selected_tickets = $tickets | .current_ticket_index = 0' \
+    --argjson tickets '[{{#each selected_tickets}}"{{this.key}}"{{#unless @last}},{{/unless}}{{/each}}]' \
+    "{state_file}" > "{state_file}.tmp" && mv "{state_file}.tmp" "{state_file}"
+  ```
+  </action>
 </check>
 
 </step>
@@ -816,155 +1289,222 @@ These agents will be notified during party-mode discussion.
 </template-output>
 </check>
 
-### 7.1b: Examine Existing Codebase (Technical Context Discovery)
+### 7.1aa: Full-Stack Feasibility Check (Strategic Level)
+
+<check if="story_types[current_ticket.key] == 'full-stack'">
+  <template-output section="full_stack_detected">
+## 🔗 Full-Stack Story Detected: {{current_ticket.key}}
+
+This story spans backend (BE) and frontend (UI/Shared/Platform).
+Strategic feasibility check required (5-10 min).
+</template-output>
+
+  <action>
+  **Party-Mode Sub-Session: Full-Stack Feasibility** (5-10 min MAX)
+
+**Participants** (5 experts):
+
+- spring-webflux-kotlin-dev (backend perspective)
+- kmp-flow-dev (frontend perspective)
+- spring-senior-architect (backend architecture)
+- kmp-senior-architect (frontend architecture)
+- Sally (end-to-end UX)
+
+**Discussion Topics** (HIGH-LEVEL ONLY - NO codebase searches):
+
+**1. Data Flow Feasibility**:
+
+- Question: "Can backend provide the data frontend needs?"
+- Backend dev: Assess MongoDB → WebFlux capability (yes/no + concerns)
+- Frontend dev: Assess DTO → ViewModel → Compose capability (yes/no + concerns)
+- Answer: "Feasible" OR "Blocker: {specific constraint}"
+
+**2. Reactive Pattern Alignment**:
+
+- Question: "Are reactive patterns aligned across layers?"
+- Backend: Mono (single value) or Flux (stream)?
+- Frontend: Flow, StateFlow, or SharedFlow expected?
+- Backpressure: Any coordination needed?
+- Answer: "Aligned" OR "Concern: {pattern mismatch}"
+
+**3. Module Placement & :contracts Enforcement**:
+
+- Question: "Where will code live?"
+- Backend: :services module
+- Frontend: :shared or :composeApp
+- **⚠️ CRITICAL: :contracts Module Enforcement**
+  - **IF story involves API contracts** (Request/Response DTOs):
+    → **MANDATORY**: Document "DTOs MUST be placed in :contracts module"
+    → Validate: Both devs confirm :contracts placement
+    → Example: `CreateUserRequest.kt`, `CreateUserResponse.kt` → `contracts/src/main/kotlin/...`
+- Answer: "Clear" OR "Unclear: {boundary question}"
+
+**4. Security Coordination**:
+
+- Question: "Any security concerns?"
+- Authentication: JWT validation on backend, token storage on frontend
+- Authorization: RBAC checks needed?
+- Input validation: Backend rules, frontend mirrors?
+- Answer: "No concerns" OR "Concern: {security gap}"
+
+**5. End-to-End UX Flow**:
+
+- Question: "Does end-to-end UX make sense?"
+- Sally validates: Error handling coordinate? (backend error codes → frontend messages)
+- Sally validates: Loading states coordinate? (API timeout → UI spinner)
+- Answer: "UX feasible" OR "UX concern: {coordination issue}"
+
+**6. Major Blockers?**:
+
+- Question: "Any technical blockers preventing implementation?"
+- Platform limitations (iOS/Android/Web)?
+- Technology constraints (KMP interop with Spring)?
+- Third-party dependencies missing?
+- Answer: "No blockers" OR "Blocker: {description}"
+  </action>
+
+  <template-output section="full_stack_feasibility_assessment">
+
+## ✅ Full-Stack Feasibility Assessment: {{current_ticket.key}}
+
+**Data Flow**: {{data_flow_status}}
+**Reactive Patterns**: {{reactive_patterns_status}}
+**Module Placement**: {{module_placement_status}}
+**Security**: {{security_status}}
+**End-to-End UX**: {{ux_coordination_status}}
+**Blockers**: {{blockers_status}}
+
+**Verdict**: {{#if full_stack_feasible}}✅ Full-stack story is FEASIBLE → Proceed to backlog refinement{{else}}⚠️ BLOCKERS IDENTIFIED → Scope adjustment needed{{/if}}
+
+**What This Check DID NOT Include** (deferred to backlog refinement):
+
+- ❌ NO detailed DTO design (field names, types, validation rules)
+- ❌ NO endpoint specifications (paths, HTTP methods, request/response shapes)
+- ❌ NO codebase examination (Glob/Grep searches for existing patterns)
+- ❌ NO detailed reactive operator chains
+- ❌ NO integration test strategy
+- ❌ NO platform-specific implementation details
+</template-output>
+
+  <action>
+  **Update state.json with full-stack feasibility**:
+  ```bash
+  jq '.full_stack_feasibility[$ticket] = $results' \
+    --arg ticket "{current_ticket.key}" \
+    --argjson results '{full_stack_feasibility_results[current_ticket.key]}' \
+    "{state_file}" > "{state_file}.tmp" && mv "{state_file}.tmp" "{state_file}"
+  ```
+  </action>
+</check>
+
+### 7.1b: High-Level Feasibility Check (Strategic - Pre-Refinement Level)
 
 <action>
-**BMad-Master delegates to developer agent**: Search codebase for existing implementations
+**BMad-Master asks both senior architects**: "Can we build this? Any major blockers?"
 
-**Agent Selection**:
+**Architect Selection**:
 
-- If {ticket_labels} contains "BE" → delegate to spring-webflux-kotlin-dev
-- If {ticket_labels} contains "Shared" or "Platform" or "UI" → delegate to kmp-flow-dev
-- Default → kmp-flow-dev
+- **Spring Senior Architect (spring-senior-architect)** - For backend/API stories
+- **KMP Senior Architect (kmp-senior-architect)** - For KMP/UI stories
+- **BOTH Architects** - For full-stack stories
 
-**Agent**: spring-webflux-kotlin-dev OR kmp-flow-dev (based on label)
+**Feasibility Questions** (Quick - 3 min):
 
-**Task**: Examine existing codebase for reusable components and patterns
+1. "Can we technically build this feature?"
+   - YES → Proceed
+   - NO → Escalate to PO (scope adjustment needed)
 
-**Module-Specific Search Scopes** (MANDATORY - see docs/architecture/coding-standards.md#codebase-search-scope):
+2. "Are there any major architectural concerns?"
+   - Examples: Module boundaries, reactive patterns, platform limitations
+   - If YES → Document in Preliminary Technical Notes
+   - If NO → No concerns, proceed
 
-<check if="current_module == 'composeApp'">
-**Working on :composeApp**
-→ **Search Order**: :composeApp → :shared → :services
-→ **Rationale**: UI layer depends on shared business logic and may reuse backend infrastructure
+3. "Are there any major technical blockers?"
+   - Examples: Missing dependencies, incompatible libraries, platform restrictions
+   - If YES → Document as dependencies/blockers
+   - If NO → Clear to proceed
 
-**Search Patterns**:
+**What Architects DO NOT Do in Pre-Refinement**:
 
-1. **Extract feature name from ticket**:
-   - Parse {ticket_summary} for key nouns (e.g., "Email Validation" → "Email", "Validator")
-   - Example: "Add user profile screen" → "Profile", "User", "Screen"
-
-2. **Search composeApp first**:
-
-   ```bash
-   Glob: composeApp/src/**/*{FeatureName}*.kt
-   Grep: {FeatureName} in composeApp/src/
-   ```
-
-3. **Search shared for business logic**:
-
-   ```bash
-   Glob: shared/src/**/*{FeatureName}*.kt
-   Grep: {FeatureName} in shared/src/
-   ```
-
-4. **Search services for backend patterns**:
-   ```bash
-   Glob: services/src/**/*{FeatureName}*.kt
-   Grep: {FeatureName} in services/src/
-   ```
-   </check>
-
-<check if="current_module == 'shared'">
-**Working on :shared**
-→ **Search Order**: :shared → :services
-→ **Rationale**: Platform-agnostic layer may leverage backend utilities
-
-**Search Patterns**:
-
-1. **Extract feature name from ticket** (same as above)
-
-2. **Search shared first**:
-
-   ```bash
-   Glob: shared/src/**/*{FeatureName}*.kt
-   Grep: {FeatureName} in shared/src/
-   ```
-
-3. **Search services for reusable utilities**:
-   ```bash
-   Glob: services/src/**/*{FeatureName}*.kt
-   Grep: {FeatureName} in services/src/
-   ```
-   </check>
-
-<check if="current_module == 'services'">
-**Working on :services**
-→ **Search Order**: :services only
-→ **Rationale**: Backend is independent with no KMP dependencies
-
-**Search Patterns**:
-
-1. **Extract feature name from ticket** (same as above)
-
-2. **Search services**:
-   ```bash
-   Glob: services/src/**/*{FeatureName}*.kt
-   Grep: {FeatureName} in services/src/
-   ```
-   </check>
-
-**What to Find**:
-
-1. **Similar Features**: Existing implementations of similar functionality
-2. **Reusable Components**: Utilities, helpers, base classes
-3. **Existing Patterns**: Coding patterns to follow for consistency
+- ❌ NO codebase searches (no Glob/Grep) - defer to backlog refinement
+- ❌ NO pattern identification - defer to backlog refinement
+- ❌ NO reusable component searches - defer to backlog refinement
+- ❌ NO detailed technical approach - defer to backlog refinement
 
 **Store Results** (in workflow state):
 
-- {{existing_implementations[current_ticket]}} = Array of file paths found
-- {{reusable_components[current_ticket]}} = Components that can be reused
-- {{patterns_found[current_ticket]}} = Coding patterns to follow
+- {{feasibility[current_ticket]}} = "YES" or "NO"
+- {{architectural_concerns[current_ticket]}} = Array of concerns (if any)
+- {{technical_blockers[current_ticket]}} = Array of blockers (if any)
+  </action>
 
-**Expected Return Format**:
+<check if="feasibility[current_ticket] == 'NO'">
+  <template-output section="feasibility_failed">
+## ⚠️ Feasibility Check Failed for {{current_ticket.key}}
 
-```
-Codebase Search Results for "{{current_ticket.summary}}":
-✅ Found: {module}/src/{path}/{FileName}.kt
-✅ Found: {module}/src/{path}/{ComponentName}.kt
-→ Decision: Reuse {ComponentName} from {module}
-→ Implementation: Import and extend existing component
+**Architects determined this story cannot be built as described.**
 
-OR
+**Reasons**:
+{{#each feasibility_reasons[current_ticket]}}
 
-No existing implementation found - building from scratch
-→ Will follow existing patterns from similar features
-```
-
-</action>
-
-<check if="existing_implementations[current_ticket].length > 0">
-  <template-output section="codebase_findings">
-## 🔍 Existing Code Found for {{current_ticket.key}}
-
-Found {{existing_implementations[current_ticket].length}} existing implementation(s):
-
-{{#each existing_implementations[current_ticket]}}
-{{@index + 1}}. **{{this.file_path}}**
-
-- Type: {{this.component_type}} (e.g., ViewModel, Repository, Utility)
-- Reusable: {{this.reusable}} (Yes/No)
-- Pattern: {{this.pattern_description}}
+- {{this}}
   {{/each}}
 
-**Reuse Strategy**:
-{{#each reusable_components[current_ticket]}}
+**Action Required**: Escalate to Product Owner for scope adjustment.
+</template-output>
 
-- Import {{this.component_name}} from {{this.module}}
-- Extend/Compose as needed for new feature
+<ask>{{user_name}}, architects identified feasibility issues. How would you like to adjust the scope?</ask>
+
+<action>Store PO feedback → Re-run feasibility check after adjustment</action>
+</check>
+
+<check if="feasibility[current_ticket] == 'YES'">
+  <check if="architectural_concerns[current_ticket].length > 0 OR technical_blockers[current_ticket].length > 0">
+    <template-output section="feasibility_concerns">
+## ✅ Feasibility Confirmed for {{current_ticket.key}} (with Concerns/Blockers)
+
+**Can Build**: YES
+
+{{#if architectural_concerns[current_ticket].length > 0}}
+**Architectural Concerns**:
+{{#each architectural_concerns[current_ticket]}}
+
+- {{this}}
   {{/each}}
-  </template-output>
-  </check>
+  {{/if}}
 
-<check if="existing_implementations[current_ticket].length == 0">
-  <template-output section="no_codebase_findings">
-## 🔍 No Existing Code Found for {{current_ticket.key}}
+{{#if technical_blockers[current_ticket].length > 0}}
+**Technical Blockers**:
+{{#each technical_blockers[current_ticket]}}
 
-- Searched modules: {searched_modules}
-- Building from scratch
-- Will follow existing patterns from similar features (if any found)
-  </template-output>
-  </check>
+- {{this}}
+  {{/each}}
+  {{/if}}
+
+**Note**: These will be documented in Preliminary Technical Notes and dependencies.
+</template-output>
+</check>
+
+  <check if="architectural_concerns[current_ticket].length == 0 AND technical_blockers[current_ticket].length == 0">
+    <template-output section="feasibility_clear">
+## ✅ Feasibility Confirmed for {{current_ticket.key}}
+
+**Can Build**: YES
+**Architectural Concerns**: None
+**Technical Blockers**: None
+
+Story is technically feasible - ready for party-mode discussion.
+</template-output>
+</check>
+</check>
+
+<template-output section="deferred_to_backlog_refinement">
+**Deferred to Backlog Refinement**:
+- Codebase search for existing implementations
+- Identification of reusable components
+- Pattern analysis and coding standards review
+- Detailed technical approach and module placement
+</template-output>
 
 ### 7.2: Party-Mode Discussion Round 1 - Initial Assessment (5-10 min)
 
@@ -1027,26 +1567,29 @@ response: "{agent_response_from_party_mode}"
 
 1. Product Manager proposes user story format
 2. All Agents discuss and propose 3-5 acceptance criteria
-3. Backend Dev + KMP Dev propose high-level technical approach **BASED ON CODEBASE FINDINGS**:
-   - **Reference existing implementations** from {{existing_implementations[current_ticket]}}
-   - **Propose reuse strategy** for {{reusable_components[current_ticket]}}
-   - **Follow patterns** from {{patterns_found[current_ticket]}}
-   - Example: "Found existing EmailValidator in shared/src/util/ - will reuse and extend for this feature"
-4. Architect validates approach
-5. **Sally (UX Expert) proposes UX specifications and design assets**:
-   - For Screen stories: Wireframe line references, component specs, screenshot attached to Jira
-   - For BE/Shared stories: Error messages, loading states, edge cases
-   - Confirms design assets in Jira (screenshot + Git links) OR explains if pending creation
-   - Confirms Confluence design page updated
-6. QA proposes preliminary testing strategy
-7. All Agents identify dependencies and blockers
-8. Confluence Manager lists identified related Confluence pages
+3. **Both Senior Architects** (spring-senior-architect + kmp-senior-architect) identify architectural concerns:
+   - **From feasibility check** (Step 7.1b results): Any concerns/blockers documented?
+   - **Module placement**: Which module should this code go in? (:services/:shared/:composeApp/:contracts)
+   - **⚠️ CRITICAL: :contracts Module Enforcement**:
+     - **IF story involves API contracts** (Request/Response DTOs):
+       → **MANDATORY**: Document "DTOs MUST be placed in :contracts module"
+       → Add to Preliminary Technical Notes: "API DTOs → :contracts module (Priority 1)"
+       → Example: `CreateUserRequest.kt`, `CreateUserResponse.kt` → `contracts/src/main/kotlin/...`
+   - **NO detailed codebase search** - defer to backlog refinement
+   - **NO pattern recommendations** - defer to backlog refinement
+   - **NO reuse strategies** - defer to backlog refinement
+4. **Sally (UX Expert) confirms design asset status**:
+   - Wireframe attached? (yes/no)
+   - Design-Pending label applied? (if no wireframe)
+   - **NO detailed component specs** - defer to backlog refinement
+5. QA identifies critical acceptance criteria
+6. All Agents identify dependencies and blockers
+7. Confluence Manager lists related Confluence pages
 
 **Product Owner (KA)**:
 
 - Reviews each proposal
 - Approves or requests changes
-- **Reviews Sally's design assets** (screenshot in Jira, wireframe quality, component specs)
 - Confirms dependencies
 - Confirms which Confluence docs are relevant
   </action>
@@ -1088,54 +1631,156 @@ If priority changed:
 - fields: - priority: { name: "{new_priority}" }
   </action>
 
-### 7.5: Update Ticket with Pre-Refined Details
+### 7.5: Update Ticket Summary and Description (Override Strategy)
 
 <action>
-**STEP 1: Update non-AC sections (markdown format)**
+**STEP 0: Improve Summary Field (if needed)**
 
-**BMad-Master delegates to jira-manager**: Update ticket with business context and design reference
+Check if {original_summary} is vague or unclear:
 
-**Agent**: jira-manager (`~/.claude/agents/jira-manager.md`)
+- Original: "{original_summary}"
+- If vague → Improve with specific context
 
-**Operation**: editJiraIssue
+**Criteria for improvement**:
+
+- Make specific (avoid "Implement X" without context)
+- Add key scope indicator (Backend/Frontend/Shared)
+- Keep under 255 characters
+- Example: "Implement user login" → "Backend - User Authentication (Email/OAuth)"
+
+**BMad-Master delegates to jira-manager**: Update summary (if needed)
 
 **Parameters**:
 
 - cloudId: "{jira_cloud_id}"
 - issueIdOrKey: "{current_ticket}"
 - fields:
-  - description: Formatted markdown with:
-    - {original_description}
-    - Separator: "---"
-    - Section: "## Business Context" + {business_context}
-    - Section: "## Design Reference" + {design_assets} (IF Screen story with designs):
+  - summary: "{improved_summary}"
+    </action>
 
-      ```markdown
-      ## Design Reference
+<action>
+**STEP 1: Override Description with Clean Structure (markdown format)**
 
-      **Screenshot**: See attachment `wireframe-{story_key}.png`
+**BMad-Master delegates to jira-manager**: Replace description with refined content
 
-      **Wireframe**: `docs/design/wireframes-[file].md:[line-start]-[line-end]` ([Screen Name])
+**Agent**: jira-manager (`~/.claude/agents/jira-manager.md`)
 
-      - Component specs: dimensions, typography, spacing, colors
-      - Interactive states with line references (default, loading, error, success)
+**Operation**: editJiraIssue
 
-      **Prototype**: `docs/design/prototypes/[file].html` (if applicable)
+**Target Length**: 600-800 characters (short and readable)
 
-      **Material3 Compliance**: ✅ Verified by Sally
-      **Accessibility**: ✅ Validated by Sally (touch targets ≥48dp, color contrast)
+**Parameters**:
 
-      **Confluence**: [Design Specifications](confluence-link)
+- cloudId: "{jira_cloud_id}"
+- issueIdOrKey: "{current_ticket}"
+- fields:
+  - description: **REPLACE** with formatted markdown:
 
-      **Status**: ✅ Designs exist | ⚠️ Design-Pending (to be created later)
-      ```
+    ```markdown
+    ## Overview
 
-    - Section: "## Preliminary Technical Notes" + {technical_notes}
-    - Section: "## Related Documentation" + {confluence_links}
-    - Section: "## Dependencies" + {dependencies}
-    - Section: "## Pre-Refinement Session Notes" + session metadata
+    [2-3 paragraph refined summary combining {original_description} + {business_context}]
+
+    ## Key Requirements
+
+    [3-5 bullet points - essential scope only from {acceptance_criteria}]
+
+    ## Acceptance Criteria
+
+    See action items below ↓
+
+    ## Technical Considerations
+
+    [3-5 key architectural decisions - brief bullets only from {technical_notes}]
+
+    - Example: "Use Auth0 for identity management"
+    - Example: ":contracts module for DTOs, :services for business logic"
+    - Example: "Reactive patterns: Mono for single values, Flux for streams"
+
+    ## Design Reference
+
+    [IF Screen story with designs - keep brief]:
+
+    - **Screenshot**: Attached as `wireframe-{story_key}.png`
+    - **Wireframe**: `docs/design/wireframes-[file].md:[lines]`
+    - **Material3**: ✅ Verified | **Accessibility**: ✅ Validated
+    ```
 
 **Expected Return**: Success confirmation
+
+**MANDATORY: After description update, convert all issue keys to inline smart links**:
+
+- Parse description for issue key patterns: `[A-Z]+-\d+` (e.g., ESNG-34, ESNG-153)
+- **SKIP** patterns in filename contexts (e.g., `wireframe-ESNG-30.png`, `ESNG-30.md`)
+- Replace each valid issue key with ADF inlineCard node:
+  ```json
+  { "type": "inlineCard", "attrs": { "url": "https://nextgendevsolutions.atlassian.net/browse/{issue_key}" } }
+  ```
+- This makes issue keys clickable with hover preview showing title + status
+
+**Note**:
+
+- Dependencies and Confluence links will be added as native Jira links in Step 1b (not in description text)
+- Original description preserved in Jira edit history (automatic traceability)
+- Detailed session notes will be added as comment in Step 7.5a
+  </action>
+
+<action>
+**STEP 1b: Create Native Jira Links (Dependencies + Confluence)**
+
+**A. Create Issue Links for Dependencies** (if {dependencies} exist):
+
+Use curl with Jira REST API:
+
+```bash
+# For each dependency in {dependencies}:
+# CRITICAL: Jira "Blocks" semantics: outwardIssue BLOCKS inwardIssue
+# Example: "ESNG-32 blocks ESNG-154" means ESNG-154 depends on ESNG-32
+#   → inwardIssue: ESNG-154 (the one being blocked)
+#   → outwardIssue: ESNG-32 (the one doing the blocking)
+
+curl -s -X POST "https://nextgendevsolutions.atlassian.net/rest/api/3/issueLink" \
+  -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": {"name": "Blocks"},
+    "inwardIssue": {"key": "{current_ticket}"},
+    "outwardIssue": {"key": "{blocker_ticket}"}
+  }'
+```
+
+**Common Link Types**:
+
+- `"Blocks"` - outwardIssue blocks inwardIssue (outward is the blocker)
+- `"Relates"` - Bidirectional association (no blocking semantics)
+
+**Link Direction Verification**:
+After creating links, verify in Jira UI:
+
+- {blocker_ticket} should show "blocks {current_ticket}" (NOT "is blocked by")
+- {current_ticket} should show "is blocked by {blocker_ticket}" (NOT "blocks")
+- If reversed, DELETE link and recreate with corrected inward/outward
+
+**B. Create Web Links for Confluence** (if {confluence_links} exist):
+
+Use curl with Jira REST API:
+
+```bash
+# For each Confluence page in {confluence_links}:
+curl -s -X POST "https://nextgendevsolutions.atlassian.net/rest/api/3/issue/{current_ticket}/remotelink" \
+  -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "object": {
+      "url": "{confluence_page_url}",
+      "title": "{confluence_page_title}"
+    }
+  }'
+```
+
+**Expected Return**: Empty response (204 No Content) = success
+
+**Note**: These links appear in Jira's "Links" section, NOT in description text
 </action>
 
 <action>
@@ -1176,61 +1821,203 @@ Append to existing description (do not replace). Use ADF taskList/taskItem struc
 **Note**: These are preliminary AC - may be refined further during backlog refinement
 </action>
 
-### 7.6: Create Issue Links for Dependencies (if applicable)
-
-<check if="dependencies.length > 0">
-  <action>
-  **Create issue links via Jira REST API** (if blocking dependencies identified)
-
-**Method**: Use curl with Jira REST API (Rovo MCP supports this but curl is more reliable)
-
-**Command Template**:
-
-```bash
-curl -s -X POST "https://nextgendevsolutions.atlassian.net/rest/api/3/issueLink" \
-  -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": {"name": "Blocks"},
-    "inwardIssue": {"key": "{blocker_ticket}"},
-    "outwardIssue": {"key": "{current_ticket}"}'
-  }'
-```
-
-**Example** (ESNG-73 blocks ESNG-74):
-
-```bash
-curl -s -X POST "https://nextgendevsolutions.atlassian.net/rest/api/3/issueLink" \
-  -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": {"name": "Blocks"},
-    "inwardIssue": {"key": "ESNG-73"},
-    "outwardIssue": {"key": "ESNG-74"}}'
-```
-
-**Expected Response**: Empty (204 No Content) = success
-
-**Common Link Types**:
-
-- `"Blocks"` - Inward issue blocks outward issue (use when identifying blockers)
-- `"Relates"` - Issues are related but not blocking
-- `"Duplicates"` - Inward issue duplicates outward issue
-
-**Verification**:
-
-```bash
-curl -s "https://nextgendevsolutions.atlassian.net/rest/api/3/issue/{current_ticket}?fields=issuelinks" \
-  -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" | jq '.fields.issuelinks'
-```
-
-**Note**: Issue links are typically created during backlog refinement, but can be created during pre-refinement if blocking dependencies are already known.
-</action>
-</check>
-
-### 7.7: Add Pre-Refined Label
+### 7.5a: Add Pre-Refinement Session Notes to Comments
 
 <action>
+**BMad-Master delegates to jira-manager**: Add comprehensive session notes as Jira comment
+
+**Agent**: jira-manager (`~/.claude/agents/jira-manager.md`)
+
+**Operation**: addJiraComment
+
+**Parameters**:
+
+- cloudId: "{jira_cloud_id}"
+- issueIdOrKey: "{current_ticket}"
+- comment: Formatted markdown with:
+
+```markdown
+## 📋 Pre-Refinement Session Notes ({session_date})
+
+### Participants
+
+{participant_list}
+
+### Business Context Summary
+
+{business_context_brief_summary}
+
+### Architectural Decisions Made
+
+{#each architectural_decisions}
+{@index}. **{decision_title}**
+
+- Rationale: {rationale}
+- Impact: {impact}
+  {/each}
+
+### Scope Clarifications
+
+{#if scope_corrections}
+**Original scope:** {original_scope_summary}
+**Refined scope:** {refined_scope_summary}
+**Reason for change:** {scope_change_rationale}
+{/if}
+
+### Design Validation Results
+
+{#if ux_issues_found}
+⚠️ **UX Issues Found**: {ux_issues_count}
+{#each ux_issues_found}
+
+- {this}
+  {/each}
+  {else}
+  ✅ **Design validation passed** - No issues found
+  {/if}
+
+### Prototype Status
+
+{#if prototype_verified == true}
+✅ **Prototype verified and up-to-date**
+{else if prototype_verified == 'N/A'}
+ℹ️ **No prototype exists yet** - Creation deferred to backlog refinement
+{else if prototype_verified == false}
+⚠️ **Prototype outdated** - Gaps documented, update required
+{/if}
+
+### Technical Analysis Summary
+
+{technical_notes_summary}
+
+### Dependencies Identified
+
+{#each dependencies}
+
+- {ticket_key}: {relationship_type} - {brief_description}
+  {/each}
+
+### Confluence Pages Referenced
+
+{#each confluence_links}
+
+- [{page_title}]({page_url})
+  {/each}
+
+### Next Steps
+
+✅ **Ready for Backlog Refinement** - Technical implementation details and Gherkin scenarios to be added
+
+---
+
+_Full party-mode transcript available in session logs if needed_
+```
+
+**Expected Return**: Comment ID confirmation
+</action>
+
+### 7.6: Create Issue Links for Dependencies (DEPRECATED - See Step 7.5 / Step 1b)
+
+**NOTE**: This step is now integrated into Step 7.5 (Step 1b) for better workflow organization.
+
+Issue links and Confluence links are created immediately after description override in Step 1b.
+
+**Skip this step** - proceed directly to Step 7.6a.
+
+### 7.6a: Diagram Decision Gate (Optional - Only If Needed)
+
+<action>
+**ONLY execute this step IF ticket meets ALL criteria**:
+- ✅ Complexity: 5+ story points OR full-stack coordination (MongoDB → WebFlux → DTO → ViewModel → Compose)
+- ✅ Clarity: Diagram reduces 3+ paragraphs to 1 visual
+- ✅ Reusability: Applies to 2+ stories (epic-level pattern)
+
+**IF criteria NOT met** → Skip to Step 7.7 (no diagram needed)
+
+**IF criteria met** → Party-mode team vote:
+
+**BMad Master asks**: "Does this ticket need a diagram to clarify scope?"
+
+**Vote options**:
+
+- YES (majority) → Create diagram
+- NO (majority) → Skip diagram
+
+**IF YES (create diagram)**:
+
+1. **Choose Diagram Type**:
+   - **Sequence**: Data flow across layers (e.g., User → API → MongoDB → DTO → UI)
+   - **Flow Chart**: Business process with decision points (e.g., payment approval)
+   - **Component**: Module boundaries (e.g., :contracts, :services, :shared)
+
+2. **Assign Owner**:
+   - Spring Architect (backend flows)
+   - KMP Architect (frontend/shared flows)
+   - Sally (UX flows)
+
+3. **Create in Confluence** (5-10 min max):
+   - Use Mermaid syntax (text-based, version controlled)
+   - Title format: `[ESNG-###] {Ticket Summary} - {Diagram Type}`
+   - Keep strategic level (5-10 components MAX, not detailed)
+   - Example:
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant API as WebFlux API
+    participant DB as MongoDB
+    participant UI as Compose UI
+
+    User->>API: POST /wallet/credit-requests {amount: $20}
+    API->>DB: save(CreditRequest)
+    DB-->>API: CreditRequest(id, status=PENDING)
+    API-->>User: 201 Created {requestId}
+
+    Note over API,DB: Entity in :services module
+    Note over API,User: DTO in :contracts module
+```
+
+4. **Link from Jira**:
+   - Add Confluence page link to ticket (Step 1b already executed)
+   - Optional: Attach PNG screenshot for quick reference
+
+5. **Quality Checklist**:
+   - [ ] Strategic level (not tactical/exhaustive)
+   - [ ] Stored in Confluence (not embedded in description)
+   - [ ] Renders in <2 seconds
+   - [ ] Legend explains non-obvious elements
+
+**Timebox**: Max 10 min diagram creation. If exceeds → Defer to backlog refinement.
+
+**Expected Return**: Confluence page URL + optional PNG attachment
+</action>
+
+### 7.7: Prototype Quality Gate + Add Pre-Refined Label
+
+<check if="prototype_verified == false">
+  <template-output section="pre_refined_blocked">
+⚠️ **{current_ticket} - Prototype Outdated**
+
+**Label Added**: "Prototype-Outdated"
+**Prototype Verified**: ❌ (outdated, gaps documented)
+
+**CANNOT apply "Pre-Refined" label until prototype updated.**
+
+Ticket must go through prototype update before proceeding.
+</template-output>
+
+  <action>
+  Skip "Pre-Refined" label for this ticket
+  Continue to next ticket
+  </action>
+</check>
+
+<check if="prototype_verified == true OR prototype_verified == 'N/A'">
+  <action>
+  **Prototype Quality Gate PASSED** ✅
+
+Proceed with marking "Pre-Refined":
+
 **BMad-Master delegates to jira-manager**: Add "Pre-Refined" label
 
 **Agent**: jira-manager (`~/.claude/agents/jira-manager.md`)
@@ -1243,9 +2030,29 @@ curl -s "https://nextgendevsolutions.atlassian.net/rest/api/3/issue/{current_tic
 - issueIdOrKey: "{current_ticket}"
 - fields:
   - labels: Merge existing labels with "Pre-Refined"
+    - Preserve: {existing_labels} (BE, Shared, Platform, UI, Design-Pending, Prototype-Pending, Prototype-Verified, etc.)
+    - Add: "Pre-Refined"
+    - Optionally add: "Prototype-Verified" (if prototype_verified == true)
 
 **Note**: jira-manager will fetch current labels, merge with new label, and update
 </action>
+
+  <template-output section="pre_refined_applied">
+✅ **"Pre-Refined" label applied to {current_ticket}**
+
+**Prototype Status**:
+{{#if prototype_verified == true}}
+
+- ✅ Prototype verified and up-to-date
+- Label: "Prototype-Verified" applied
+  {{else if prototype_verified == 'N/A'}}
+- ℹ️ No prototype exists yet
+- Label: "Prototype-Pending" applied
+  {{/if}}
+
+**Ready for Backlog Refinement**
+</template-output>
+</check>
 
 ### 7.8: Reply to Mentions (if mentions found)
 
@@ -1286,18 +2093,19 @@ _Addressed during Pre-Refinement session on {date}_
   </template-output>
 </check>
 
-<note>
-Mark {current_ticket} refined.
-Save state: refined_tickets[current_ticket] = {
-  pre_refined: true,
-  priority_changed: {priority_changed},
-  business_context: {business_context},
-  po_decisions: {po_decisions},
-  mentions_addressed: {{mentions_found[current_ticket].length}}
-}
-
-Save state: mentions_found, mention_responses
-</note>
+<action>
+**Update state.json - Mark ticket pre-refined**:
+```bash
+jq '.refined_tickets += [$ticket] | .current_ticket_index += 1 | .ticket_results[$ticket] = {
+  "pre_refined": true,
+  "priority_changed": $priority_changed,
+  "mentions_addressed": $mentions_count
+}' --arg ticket "{current_ticket.key}" \
+   --argjson priority_changed '{priority_changed}' \
+   --argjson mentions_count '{{mentions_found[current_ticket].length}}' \
+   "{state_file}" > "{state_file}.tmp" && mv "{state_file}.tmp" "{state_file}"
+```
+</action>
 
 <template-output section="ticket_complete">
 ✅ **{{current_ticket.key}}** pre-refined successfully!
@@ -1388,8 +2196,21 @@ Save state: mentions_found, mention_responses
 **Tickets Pre-Refined**: {{selected_tickets.length}}
 </template-output>
 
-<note>Workflow complete. Delete state file.</note>
+<action>
+**Mark workflow complete and cleanup state**:
+```bash
+# Update state to completed
+jq '.status = "completed" | .completed_at = "'"$(date -Iseconds)"'"' \
+  "{state_file}" > "{state_file}.tmp" && mv "{state_file}.tmp" "{state_file}"
+
+# Optionally: Delete state folder after successful completion
+
+# rm -rf "{state_dir}"
+
+```
+</action>
 
 </step>
 
 </workflow>
+```

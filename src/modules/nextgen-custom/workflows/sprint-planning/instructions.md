@@ -233,10 +233,9 @@ Display to user:
 2. Generate Developer Implementation Checklist (with codebase search)
 3. Generate Code Review Checklist
 4. Generate QA Validation Checklist
-5. Generate Gherkin Acceptance Criteria
-6. Add checklists to Jira as Action Items
-7. Add design assets (UI stories only)
-8. Set metadata (story points, dependencies, assignee)
+5. Add checklists to Jira as Action Items
+6. Add design assets (UI stories only)
+7. Set metadata (story points, dependencies, assignee)
 
 **Processing {{selected_tickets.length}} tickets...**"
 </action>
@@ -251,6 +250,43 @@ Display to user:
 ### Processing Ticket {{@index + 1}}/{{selected_tickets.length}}: {current_ticket}
 
 </template-output>
+
+### 2.0: Verify Clean Tickets
+
+<action>
+**For each ticket in candidate list**:
+
+Verify 8-item clean ticket standard:
+
+1. Summary present
+2. Description complete
+3. ACs in Gherkin format (Given/When/Then)
+4. Jira links present
+5. Confluence links (if applicable)
+6. Story points set
+7. Labels applied
+8. "Ready-for-Sprint" label present
+
+**Quality Gate**:
+
+- IF any item missing → REJECT ticket (log issue, notify SM)
+- IF all items present → ACCEPT ticket (eligible for sprint)
+  </action>
+
+<template-output section="clean_ticket_verification">
+## ✅ Clean Ticket Verification
+
+**Accepted**: {{accepted_count}} tickets (all 8 items present)
+**Rejected**: {{rejected_count}} tickets (missing items - sent back to refinement)
+
+{{#if rejected_count > 0}}
+⚠️ **Rejected Tickets**:
+{{#each rejected_tickets}}
+
+- {{key}}: Missing {{missing_items}}
+  {{/each}}
+  {{/if}}
+  </template-output>
 
 ### 2.1: Load Story Context
 
@@ -450,104 +486,6 @@ Return as markdown list (- [ ] format).
 </invoke-task>
 
 <action>Store result in {qa_checklist}</action>
-
-### 2.4.1: Generate Gherkin Acceptance Criteria
-
-<invoke-task agent="qa">
-**Task:** Generate Gherkin Acceptance Criteria for {current_ticket}
-
-**Story Details:**
-
-- Summary: {ticket_summary}
-- Description: {ticket_description}
-- Labels: {{ticket_labels.join(', ')}}
-- Existing ACs: {ticket_description} (extract any existing acceptance criteria)
-
-**Standards to Load:**
-
-- docs/qa/testing-standards.md
-- docs/architecture/clean-code-principles.md
-- docs/architecture/coding-standards.md
-
-**Output Required:**
-Generate 3-5 Gherkin scenarios in Given/When/Then format covering:
-
-1. Primary success scenarios (happy path)
-2. Edge cases and boundary conditions
-3. Error conditions and validation failures
-4. Integration points with other modules
-5. Cross-platform compatibility (if KMP story)
-
-**Gherkin Format**:
-
-```gherkin
-Scenario: [Clear, specific scenario name]
-Given [Precondition - system state]
-When [Action - what the user/system does]
-Then [Expected outcome - observable result]
-And [Additional assertion - if needed]
-```
-
-**Quality Requirements**:
-
-- Each scenario must be testable and automatable
-- Use specific, concrete conditions (avoid vague terms)
-- Include both technical and business acceptance criteria
-- Reference actual file paths, module names, commands where applicable
-- Align with project architecture (reactive patterns, KMP structure)
-
-Return as Gherkin syntax in code block format.
-</invoke-task>
-
-<action>Store result in {gherkin_scenarios}</action>
-
-<action>
-**Add Gherkin ACs to Jira Description**
-
-**BMad-Master delegates to jira-manager**: Add Gherkin section to Jira description
-
-**Agent**: jira-manager (`~/.claude/agents/jira-manager.md`)
-
-**Operation**: Update Jira description with Gherkin ACs (ADF code block with syntax highlighting)
-
-**Delegation Instruction**:
-"Add Gherkin Acceptance Criteria section to {current_ticket} description:
-
-1. Fetch current description ADF via REST API
-2. Append new heading: 'Acceptance Criteria (Gherkin)'
-3. Add code block with language='gherkin' containing scenarios
-4. PUT updated ADF back to ticket
-5. Verify Gherkin section appears in Jira UI with proper syntax highlighting"
-
-**Pass to jira-manager**:
-
-- cloudId: "{jira_cloud_id}"
-- issueIdOrKey: "{current_ticket}"
-- gherkin_scenarios: {gherkin_scenarios}
-
-**Expected Return**: Success confirmation
-
-**ADF Structure**:
-
-```json
-{
-  "type": "heading",
-  "attrs": {"level": 2},
-  "content": [{"type": "text", "text": "Acceptance Criteria (Gherkin)"}]
-},
-{
-  "type": "codeBlock",
-  "attrs": {"language": "gherkin"},
-  "content": [{"type": "text", "text": "{gherkin_scenarios}"}]
-}
-```
-
-</action>
-
-<note>
-Mark {current_ticket} Gherkin ACs added.
-Save state: completed_tickets[current_ticket].gherkin_acs_added = true
-</note>
 
 ### 2.5: Add Checklists to Jira as Action Items (IMMEDIATE SAVE)
 

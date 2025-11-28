@@ -8,11 +8,55 @@
 
 ---
 
+## State File Management
+
+**State Folder**: `.bmad/state/backlog-refinement-{session_id}/`
+
+<action>
+**At workflow start, create state folder and initialize state.json**:
+
+```bash
+# Generate session ID (timestamp-based)
+SESSION_ID=$(date +%Y%m%d-%H%M%S)
+STATE_DIR=".bmad/state/backlog-refinement-${SESSION_ID}"
+
+# Create state folder
+mkdir -p "${STATE_DIR}"
+
+# Initialize state.json
+cat > "${STATE_DIR}/state.json" << 'EOF'
+{
+  "workflow": "backlog-refinement",
+  "session_id": "${SESSION_ID}",
+  "started_at": "$(date -Iseconds)",
+  "status": "in_progress",
+  "selected_tickets": [],
+  "refined_tickets": [],
+  "design_blocked_tickets": [],
+  "current_ticket_index": 0,
+  "cache_dir": "${STATE_DIR}"
+}
+EOF
+```
+
+Store `{state_dir}` = "${STATE_DIR}" for use throughout workflow.
+Store `{state_file}` = "${STATE_DIR}/state.json" for recovery.
+</action>
+
 ## Recovery Protocol
 
 <check if="state_file_exists">
-  <action>Load state → Verify refined tickets in Jira → Prompt user to resume</action>
-</check>
+  <action>
+  **Recovery from previous session**:
+
+1. Scan `.bmad/state/backlog-refinement-*/state.json` for sessions with `status: "in_progress"`
+2. Load most recent state file → Parse JSON
+3. Verify refined tickets in Jira → Compare with `refined_tickets` array
+4. Prompt user: "Found incomplete session from {started_at}. Resume? (yes/no)"
+5. If yes → Set `{state_dir}` and `{state_file}` from recovered session
+6. If no → Create new session (run State File Management above)
+   </action>
+   </check>
 
 ---
 
@@ -30,7 +74,7 @@
 **Parameters**:
 
 - cloudId: "{jira_cloud_id}"
-- jql: "project=ESNG AND status=\"To Do\" AND type != Epic AND labels NOT IN (\"Ready-for-Sprint\") ORDER BY priority DESC, created ASC"
+- jql: "project=ESNG AND status=\"To Do\" AND type != Epic AND labels NOT IN (\"Ready-for-Sprint\") ORDER BY Rank ASC, created ASC"
 - maxResults: {max_tickets}
 
 **Expected Return**: Array of ticket objects with keys, summaries, priorities, labels, and acceptance criteria status
@@ -56,7 +100,14 @@ Select items to refine (comma-separated numbers):
 
 <action>Parse → Store in {selected_tickets}</action>
 
-<note>Save state: selected_tickets</note>
+<action>
+**Update state.json**:
+```bash
+jq '.selected_tickets = $tickets | .current_ticket_index = 0' \
+  --argjson tickets '["'"$(echo {selected_tickets} | sed 's/,/","/g')"'"]' \
+  "{state_file}" > "{state_file}.tmp" && mv "{state_file}.tmp" "{state_file}"
+```
+</action>
 
 </step>
 
@@ -70,64 +121,142 @@ Select items to refine (comma-separated numbers):
 
 <action>Set {current_ticket_index} = {{@index}}</action>
 
-### 2.1: Fetch Ticket and Confluence Docs
+### 2.0: Force Re-Cache Current Ticket + Linked Ticket Detection
 
 <action>
-**BMad-Master delegates to jira-manager**: Fetch complete ticket details
+**FORCE RE-CACHE Current Ticket** (overwrite existing cache):
+
+**BMad-Master delegates to jira-manager**: Cache current ticket
 
 **Agent**: jira-manager (`~/.claude/agents/jira-manager.md`)
 
-**Operation**: getJiraIssue
+**Operation**: cache_jira_ticket
 
 **Parameters**:
 
-- cloudId: "{jira_cloud_id}"
-- issueIdOrKey: "{current_ticket}"
+- issue_key: {current_ticket}
+- force_overwrite: true ← CRITICAL: Always overwrite existing cache
+- cache_dir: `{state_dir}/{current_ticket}/`
 
-**Expected Return**: Complete ticket object with description, status, labels, priority, assignee
+**Why Force Overwrite**:
 
-Store results in: {ticket_summary}, {ticket_description}, {ticket_status}, etc.
-</action>
+- Ticket may have been updated since pre-refinement
+- Separate sessions require fresh baseline
+- Ensures agents work with latest data
+
+**Expected Return**: Cache folder path
+
+Store in {cached_ticket_folders}
+
+---
+
+**Detect Linked Tickets** (BE ↔ UI relationships):
+
+1. Fetch current ticket issue links via jira-manager:
+   - Check link types: "relates to", "blocks", "is blocked by"
+
+2. Analyze links for BE ↔ UI relationship:
+   - IF current ticket has BE label AND links to ticket with (UI|Shared|Platform) label → linked_ticket = true
+   - IF current ticket has (UI|Shared|Platform) label AND links to ticket with BE label → linked_ticket = true
+   - ELSE → linked_ticket = false
+
+3. IF linked_ticket = true:
+   - **Fetch linked ticket on-demand via MCP** (NO caching):
+     ```
+     jira_get_issue(issue_key={linked_ticket_key}, fields="*all")
+     ```
+   - Store linked ticket data in {linked_ticket_data}
+   - Proceed to Step 2.1aa (Contract Design Session)
+
+---
+
+**🚨 MANDATORY: Read Blocking & Related Ticket Designs**
+
+This step ensures agents understand shared contracts, DTOs, and entities from dependent tickets BEFORE codebase search.
+
+4. **Fetch ALL linked tickets** (not just BE ↔ UI):
+   - Use issue links from step 1: "blocked by", "blocks", "relates to"
+   - For EACH linked ticket → `jira_get_issue(issue_key={linked_key}, fields="*all")`
+
+5. **Extract Design Artifacts** from linked ticket descriptions:
+   - Code blocks (kotlin, json, gherkin)
+   - DTOs, entities, repository signatures, API contracts
+   - Store in {upstream_designs[ticket_key]}
+
+6. **Priority Enforcement**:
+   - **"is blocked by" tickets**: 🔴 **MANDATORY** - These define contracts THIS ticket MUST use. Extract ALL code blocks and treat as source of truth. DO NOT propose alternatives.
+   - **"relates to" tickets**: 🟡 **RECOMMENDED** - Check for shared contracts, avoid duplication.
+   - **"blocks" tickets**: 🟢 **INFORMATIONAL** - Understand downstream consumers.
+
+7. **Store for Later Steps**:
+   - {blocking_ticket_designs} = Designs from "is blocked by" tickets (MUST REUSE)
+   - {related_ticket_designs} = Designs from "relates to" tickets (SHOULD CHECK)
+   - These are used in Step 2.1c (Codebase Search) and Party-Mode discussions
+     </action>
+
+<template-output section="linked_ticket_detection">
+## 🔗 Linked Ticket Detection: {{current_ticket}}
+
+{{#if linked_ticket}}
+✅ **Linked Ticket Detected**: {{linked_ticket_key}}
+
+- Current ticket label: {{current_ticket_label}}
+- Linked ticket label: {{linked_ticket_label}}
+- Relationship: {{link_type}}
+
+📦 **Caching Tickets**:
+
+- Cached: {{current_ticket}} → {cached_folder_path_1}
+- Cached: {{linked_ticket_key}} → {cached_folder_path_2}
+
+⏭️ Next: Contract Design Session (Step 2.1aa)
+{{else}}
+ℹ️ No BE ↔ UI linked ticket detected - proceeding with standard refinement
+{{/if}}
+
+{{#if blocking_tickets.length > 0}}
+🚨 **Blocking Ticket Designs (MUST REUSE)**:
+{{#each blocking_tickets}}
+
+- **{{this.key}}**: {{this.summary}}
+  - Contracts extracted: {{this.extracted_artifacts}}
+    {{/each}}
+    {{/if}}
+
+{{#if related_tickets.length > 0}}
+🔗 **Related Ticket Designs (CHECK FOR REUSE)**:
+{{#each related_tickets}}
+
+- **{{this.key}}**: {{this.summary}}
+  {{/each}}
+  {{/if}}
+  </template-output>
+
+<gate name="cache_verification" blocking="true">
+  <verify>File {state_dir}/{current_ticket}/ticket.md EXISTS</verify>
+  <on-failure>HARD STOP - Cache missing. Retry Step 2.0.</on-failure>
+</gate>
+
+### 2.1: Read Ticket Details from Cache
 
 <action>
-Parse {ticket_description} for Confluence links (URLs containing `/wiki/spaces/` or `/wiki/pages/`)
+**Read from cache** (created in Step 2.0):
 
-If Confluence links found → Extract page IDs
-</action>
+- `{state_dir}/{current_ticket}/ticket.md` → {ticket_summary}, {ticket_description}, {ticket_status}, {ticket_labels}
+- `{state_dir}/{current_ticket}/confluence/*.md` → {confluence_context}
+- `{state_dir}/{current_ticket}/comments/*.md` → for Step 2.1a
+  </action>
 
-<check if="confluence_links.length > 0">
-  <action>
-  **BMad-Master delegates to confluence-manager**: Fetch related Confluence pages
-
-**Agent**: confluence-manager (BMad built-in)
-
-**Operation**: getConfluencePage (for each link)
-
-**Parameters**:
-
-- cloudId: "{jira_cloud_id}"
-- pageId: "{extracted_page_id}"
-
-**Expected Return**: Page content in Markdown format
-
-Store results in: {confluence_context}
-</action>
-</check>
-
-### 2.1a: Parse @Mentions from Jira (NEW)
+### 2.1a: Parse @Mentions from Jira
 
 <action>
-**BMad-Master delegates to jira-manager**: Parse @mentions from ticket
-
-**Agent**: jira-manager (`~/.claude/agents/jira-manager.md`)
-
-**Operation**: parseMentions
+**Parse @mentions from cached ticket data**
 
 **Input**:
 
 - Ticket Key: {current_ticket}
-- Description: {ticket_description}
-- Footer Comments: Fetch via getConfluencePageFooterComments or Jira API
+- Description: {ticket_description} (from cached ticket.md)
+- Comments: Read from {state_dir}/{current_ticket}/comments/\*.md
 
 **Processing**:
 
@@ -160,189 +289,46 @@ These agents will be notified during party-mode discussion.
 </template-output>
 </check>
 
-### 2.1b: UX Design Validation (Path Depends on Pre-Refined Label)
+### 2.1b: UX Design Validation
 
 **Duration**: 5-25 minutes (depends on ticket preparation state)
 
 <action>
 **Check ticket labels** to determine refinement path:
 
-<check if="ticket.labels.includes('Pre-Refined')">
-  **PATH A: PRE-REFINED TICKET - Light Validation & Gap Analysis** (5-10 min)
+<check if="!ticket.labels.includes('Pre-Refined')">
+  **⛔ TICKET NOT PRE-REFINED - Cannot Proceed**
 
-Set {{refinement_path[current_ticket]}} = "pre-refined-light"
+  <template-output>
+⛔ **{current_ticket} is NOT pre-refined**
 
-**BMad-Master delegates to ux-exprt (Sally)**: Light UX validation and gap analysis
+This ticket lacks the "Pre-Refined" label and cannot proceed through backlog-refinement.
 
-**Agent**: bmad:bmm:agents:ux-exprt
+**Required Action**:
 
-**Sally's Light Review Workflow**:
+1. Exit this session
+2. Run pre-refinement workflow: `/BMad:nextgen-custom:workflows:pre-refinement {current_ticket}`
+3. Complete the pre-refinement process
+4. Return to backlog-refinement with the pre-refined ticket
 
-#### For Stories with "Screen", "Interface", "View", "Modal", "Dialog", "Form", "Button", "Menu" in Title:
+**Why?** Pre-refinement ensures:
 
-**LIGHT VALIDATION & GAP ANALYSIS** (5-10 min):
+- ACs are validated with PO
+- Story points are estimated
+- Dependencies are identified
+- UX designs are reviewed
 
-**Step 1: Verify Designs Still Current**
-
-1. Check screenshot attached to Jira (from pre-refinement)
-2. Verify wireframe file still exists at referenced path
-3. Verify design specs in Jira description are complete
-
-**Step 2: Quick Regression Check**
-
-1. Scan wireframe for obvious Material3 violations (quick visual scan, not deep analysis)
-2. Spot-check 2-3 components for accessibility (quick check, not full audit)
-3. Verify design-system.md reference is still current
-
-**Step 3: Gap Analysis** (CRITICAL - Check for changes since pre-refinement)
-
-1. **Compare current ACs vs original ACs from pre-refinement**:
-   - Read current Jira description → Extract ACs
-   - Compare with Pre-Refinement Session Notes section
-   - Identify: Were NEW ACs added? Were ACs modified?
-
-2. **If NEW/Modified ACs found**:
-   - Check wireframes for coverage of new ACs
-   - Example: AC added "Show loading spinner during save" → Does wireframe show spinner?
-   - If gap found → Note in {ux_issues_found}
-
-3. **Cross-Story Consistency Spot-Check**:
-   - Quick check: Do sibling stories still use same patterns?
-   - Example: Button heights consistent across ESNG-41, ESNG-42?
-   - Only check if obviously visible, not deep comparison
-
-**Step 4: Present Gaps (IF FOUND)**
-
-  <check if="ux_issues_found.length > 0">
-    <action>
-    Sally presents gap analysis findings:
-
-    **Gap Analysis Results**:
-    ```
-    ## Gaps Found in {current_ticket} (Pre-Refined Ticket)
-
-    ### New ACs Added Since Pre-Refinement:
-    1. **AC 5: Show loading spinner during save**
-       - Wireframe Coverage: ❌ Missing
-       - Impact: Dev won't know what to implement
-       - Fix: Add loading state to wireframe section
-
-    2. **AC 6: Display error message if network fails**
-       - Wireframe Coverage: ⚠️ Partial (shows error, but not network-specific)
-       - Impact: Error message text unclear
-       - Fix: Update wireframe with specific error message
-
-    ### Design Regressions Detected:
-    3. **Button height changed** (vs pre-refinement screenshot)
-       - Pre-refinement: 48dp
-       - Current wireframe: 40dp (someone edited wireframe file)
-       - Impact: Accessibility violation
-       - Fix: Revert to 48dp
-
-    **Total Gaps**: {{ux_issues_found.length}}
-    **Estimated Fix Time**: 10 minutes
-    ```
-
-    Store in {ux_issues_found}
-    </action>
-
-    <ask>
-
-Sally found {{ux_issues_found.length}} gaps in pre-refined ticket {current_ticket}.
-
-**Options**:
-A) Sally fixes gaps now ({estimated_fix_time} min) - Continue refinement after fixes
-B) Mark "Design-Gap" and BLOCK "Ready-for-Sprint" (HARD GATE)
-
-Enter A or B:
-</ask>
-
-    <action>Store in {po_fix_decision}</action>
-
-    <check if="po_fix_decision == 'A'">
-      <action>
-      Sally fixes gaps (same process as full validation fixes):
-      - Update wireframes for new ACs
-      - Fix regressions
-      - Commit to Git via git-manager
-      - Update Jira screenshot
-
-      Set {{design_sign_off[current_ticket].approved}} = true
-      Store in {ux_fixes_applied}
-      </action>
-
-      <template-output>
-
-✅ **Sally fixed {{ux_issues_found.length}} gaps** (Pre-Refined Ticket)
-
-- Gaps closed: {{ux_issues_found.length}}
-- Design sign-off: ✅ APPROVED
-
-Proceeding with refinement...
+Skipping to next ticket (if any)...
 </template-output>
-</check>
-
-    <check if="po_fix_decision == 'B'">
-      <action>
-      **BMad-Master delegates to jira-manager**: Block ticket
-
-      Operations:
-      1. Add label "Design-Gap"
-      2. Add comment documenting gaps
-      3. **DO NOT add "Ready-for-Sprint" label** (BLOCKED)
-
-      Store in {design_blocked_tickets}
-      Set {{design_sign_off[current_ticket].approved}} = false
-      </action>
-
-      <template-output>
-
-⛔ **{current_ticket} BLOCKED - Design gaps unresolved** (Pre-Refined Ticket)
-
-**Label Added**: "Design-Gap"
-**Gaps**: {{ux_issues_found.length}} documented in Jira
-
-Skipping to next ticket...
-</template-output>
-
-      <action>Skip to next ticket</action>
-    </check>
-
-  </check>
-
-  <check if="ux_issues_found.length == 0">
-    <action>
-    No gaps found - designs still valid since pre-refinement
-
-    Set {{design_sign_off[current_ticket].approved}} = true
-    Set {{design_assets_prepared[current_ticket]}} = true
-    </action>
-
-    <template-output>
-
-✅ **Sally's Light Review: APPROVED** (Pre-Refined Ticket)
-
-- Pre-refinement designs: ✅ Still current
-- No new ACs since pre-refinement: ✅
-- No regressions detected: ✅
-
-Proceeding with refinement...
-</template-output>
-</check>
-
-#### For BE/Shared/Platform Stories (No Screen in Title):
-
-**LIGHT REVIEW** (5 min):
-Same as full validation (no difference for BE stories)
 
   <action>
-  Set {{design_sign_off[current_ticket].approved}} = true
-  Set {{sally_review_complete[current_ticket]}} = "light_review"
+  Add to {{tickets_skipped}}: {current_ticket}
+  Skip to next ticket in batch
   </action>
 </check>
 
-<check if="!ticket.labels.includes('Pre-Refined')">
-  **PATH B: NON-PRE-REFINED TICKET - Full Validation** (20-25 min)
+<check if="ticket.labels.includes('Pre-Refined')">
+  **PRE-REFINED TICKET - Full Backlog Refinement** (20-25 min)
 
 Set {{refinement_path[current_ticket]}} = "full"
 
@@ -712,11 +698,119 @@ Set {{sally_review_complete[current_ticket]}} = "light_review"
 </action>
 </action>
 
-<note>Save state: sally_review_complete, design_assets_prepared, ux_issues_found, ux_fixes_applied, design_consistency_validated, design_sign_off, design_blocked_tickets</note>
+<action>
+**Update state.json with UX validation results**:
+```bash
+jq '.ux_validation[$ticket] = {
+  "sally_review_complete": $sally_complete,
+  "design_assets_prepared": $assets_prepared,
+  "ux_issues_found": $issues_found,
+  "design_sign_off": $sign_off
+}' --arg ticket "{current_ticket}" \
+   --argjson sally_complete '{sally_review_complete}' \
+   --argjson assets_prepared '{design_assets_prepared}' \
+   --argjson issues_found '{ux_issues_found}' \
+   --argjson sign_off '{design_sign_off}' \
+   "{state_file}" > "{state_file}.tmp" && mv "{state_file}.tmp" "{state_file}"
+```
+</action>
+
+### 2.1aa: Contract Design Session (Linked Tickets Only)
+
+<check if="linked_ticket == true">
+<action>
+**Dual-Agent Contract Design Session** (10-15 min):
+
+**Participants**:
+
+- spring-webflux-kotlin-dev (backend perspective)
+- kmp-flow-dev (frontend perspective)
+- Share: Current ticket cache folder + linked ticket data from MCP fetch
+
+**Discussion Topics**:
+
+1. **API Endpoint Specifications**:
+   - HTTP method (GET/POST/PUT/DELETE)
+   - Path (e.g., `/api/v1/users/{userId}`)
+   - Request DTO shape (fields, types, validation rules)
+   - Response DTO shape (fields, types, example JSON)
+   - Error responses (4xx/5xx codes, error DTO)
+
+2. **DTO Field Design** (:contracts module):
+   - Which ticket creates DTO? (usually BE ticket)
+   - Which ticket uses DTO? (usually UI ticket)
+   - DTO location: :contracts/src/commonMain/kotlin/dto/{DtoName}.kt
+   - Fields: name, type, @Serializable, validation annotations
+
+3. **Reactive Pattern Coordination**:
+   - Backend: Mono (single value) or Flux (stream)?
+   - Frontend: Flow, StateFlow, or SharedFlow?
+   - Backpressure handling needed?
+
+4. **Security Coordination**:
+   - JWT token required?
+   - RBAC checks needed?
+   - Input validation rules?
+
+**Output Method**:
+
+1. **APPEND** contract details to BOTH ticket descriptions (NOT override):
+   - Section: "## API Contract"
+   - Use ADF code blocks with `json` syntax for request/response examples
+   - Use ADF code blocks with `kotlin` syntax for DTO code examples
+2. **Add comment** to BOTH tickets: "API contract defined in :contracts/{DtoName}.kt"
+3. Store in {api_contracts}
+
+**Code Block Format** (MANDATORY):
+
+```json
+{
+  "userId": "string",
+  "email": "string"
+}
+```
+
+**NOT** Wiki markup:
+
+```
+{noformat}
+{"userId": "string"}
+{noformat}
+```
+
+</action>
+
+<template-output section="contract_design_result">
+## ✅ API Contract Design Complete
+
+**Endpoint**: {{http_method}} {{api_path}}
+**DTO Location**: :contracts/{{dto_file_path}}
+
+**Request**: {{request_dto_fields}}
+**Response**: {{response_dto_fields}}
+
+**Reactive Coordination**:
+
+- Backend: {{backend_reactive_type}} (Mono/Flux)
+- Frontend: {{frontend_reactive_type}} (Flow/StateFlow)
+
+**Both tickets updated with contract details (APPENDED to description).**
+</template-output>
+</check>
 
 ### 2.1c: Examine Existing Codebase (Pre-Party-Mode)
 
 <action>
+**🚨 CRITICAL: Check Blocking Ticket Designs FIRST**
+
+Before searching codebase, check {blocking_ticket_designs} from Step 2.0:
+
+- IF artifact exists in blocking ticket → USE IT (do not search codebase)
+- IF artifact NOT in blocking tickets → Search codebase
+- Blocking ticket designs are SOURCE OF TRUTH (even if not implemented yet)
+
+---
+
 **BMad-Master delegates to developer agent**: Quick codebase scan for reusable components
 
 **Agent Selection**:
@@ -728,6 +822,8 @@ Set {{sally_review_complete[current_ticket]}} = "light_review"
 **Agent**: spring-webflux-kotlin-dev OR kmp-flow-dev (based on label)
 
 **Task**: Search for existing implementations before party-mode
+
+**🔴 MANDATORY INPUT**: Provide {blocking_ticket_designs} to agent - these define contracts this ticket MUST use
 
 **Module-Specific Search Scopes** (MANDATORY - see docs/architecture/coding-standards.md#codebase-search-scope):
 
@@ -764,76 +860,26 @@ No existing implementation - building from scratch
 
 </action>
 
-<note>Save state: existing_implementations, reusable_components, patterns_found</note>
-
-### 2.2: Party-Mode Discussion (Path Depends on Pre-Refined Label)
-
-**Duration**: 15-45 minutes (depends on ticket preparation state)
-
-<check if="refinement_path[current_ticket] == 'pre-refined-light'">
-**PATH A: LIGHT PARTY-MODE - Pre-Refined Ticket** (15-20 min)
-
-**Focus**: Verification + Gap Analysis + Story Points
-
 <action>
-Execute light party-mode verification session for {current_ticket}:
-
-**Context for Party-Mode**:
-
-- Ticket: {current_ticket}
-- Summary: {ticket_summary}
-- Pre-Refinement Status: ✅ Pre-Refined (light validation mode)
-- Gap Analysis Results: {gap_analysis_results}
-- **🔔 Agent Mentions**: {{mentions_found[current_ticket]}}
-
-**Mention Handling**:
-{{#each mentions_found[current_ticket]}}
-
-- **{{this.agent_id}}**: You were mentioned in {{this.source}}:
-
-  > "{{this.context}}"
-
-  Please address this mention during the discussion.
-  {{/each}}
-
-**Session Type**: Backlog Refinement (Light Verification)
-
-**Required Participants**: Core agents only
-
-- Product Manager - Validate ACs completeness
-- Backend Dev OR KMP Dev (based on label) - Validate technical feasibility
-- UX Expert (Sally - bmad:bmm:agents:ux-exprt) - Present gap analysis findings
-- QA - Validate testing approach
-- Scrum Master (facilitates session)
-
-**Discussion Topics** (Streamlined):
-{{#if mentions_found[current_ticket].length > 0}} 0. **🔔 Address Mentions FIRST** (Mentioned agents respond)
-{{/if}}
-
-1. **Verification Check** (PM + QA): Has anything changed since pre-refinement?
-2. **Gap Analysis Review** (Sally leads):
-   - Present any gaps/regressions found in Step 2.1b
-   - Discuss if changes require wireframe updates
-   - Confirm design sign-off still valid
-3. **AC Completeness** (PM + QA + Sally): Are current ACs complete? Any new edge cases?
-4. **Dependencies Check**: Any new blockers since pre-refinement?
-5. **Story Point Re-Validation**: Do points need adjustment? (All vote)
-
-**Required Output**:
-
-- Gap analysis addressed (Sally approved)
-- ACs validated as complete (PM + QA approved)
-- Story points confirmed or adjusted
-- Dependencies verified
-
-Execute: \*party-mode
+**Update state.json with codebase findings**:
+```bash
+jq '.codebase_context[$ticket] = {
+  "existing_implementations": $impl,
+  "reusable_components": $reuse,
+  "patterns_found": $patterns
+}' --arg ticket "{current_ticket}" \
+   --argjson impl '{existing_implementations}' \
+   --argjson reuse '{reusable_components}' \
+   --argjson patterns '{patterns_found}' \
+   "{state_file}" > "{state_file}.tmp" && mv "{state_file}.tmp" "{state_file}"
+```
 </action>
-</check>
 
-<check if="refinement_path[current_ticket] == 'full'">
-**PATH B: FULL PARTY-MODE - Non-Pre-Refined Ticket** (30-45 min)
+### 2.2: Party-Mode Discussion (Full Detailed Design)
 
-**Focus**: Complete refinement from scratch
+**Duration**: 30-45 minutes
+
+**Focus**: Complete detailed design with implementation approach for ALL tickets
 
 <action>
 Execute full party-mode refinement session for {current_ticket}:
@@ -845,6 +891,8 @@ Execute full party-mode refinement session for {current_ticket}:
 - Description: {ticket_description}
 - Confluence Context: {confluence_context}
 - **🔔 Agent Mentions**: {{mentions_found[current_ticket]}}
+- **🚨 Blocking Ticket Designs**: {blocking_ticket_designs} ← MUST REUSE these contracts/DTOs/entities
+- **🔗 Related Ticket Designs**: {related_ticket_designs} ← CHECK for shared artifacts
 
 **Mention Handling**:
 {{#each mentions_found[current_ticket]}}
@@ -886,6 +934,7 @@ Execute full party-mode refinement session for {current_ticket}:
    - Explain patterns to follow from {{patterns_found[current_ticket]}}
    - Example: "Found EmailValidator in shared/src/util/ - will reuse and extend"
 5. Implementation Approach (Devs lead - BASED ON CODEBASE FINDINGS)
+   - For MongoDB entities: Follow entity standards (@Document, @TypeAlias, AbstractEntity)
 6. Acceptance Criteria Completeness (PM + QA + Sally validate)
 7. Testing Strategy (QA leads)
 8. Code Standards & Patterns (Code Reviewer validates)
@@ -902,7 +951,6 @@ Execute full party-mode refinement session for {current_ticket}:
 
 Execute: \*party-mode
 </action>
-</check>
 
 <check if="mentions_found[current_ticket].length > 0">
   <action>
@@ -919,32 +967,100 @@ response: "{agent_response_from_party_mode}"
 </action>
 </check>
 
-### 2.3: Update Ticket Description with Action Items
+### 2.3: APPEND Technical Details to Description
 
 <action>
-**STEP 1: Update non-AC sections (markdown format)**
+**STEP 1: APPEND Technical Sections** (NOT override)
 
-**BMad-Master delegates to jira-manager**: Update ticket with technical details
+**BMad-Master delegates to jira-manager**: APPEND technical details to existing description
 
 **Agent**: jira-manager (`~/.claude/agents/jira-manager.md`)
 
-**Operation**: editJiraIssue
+**Operation**: append_to_description (ADF format)
+
+**CRITICAL RULES**:
+
+1. **APPEND ONLY** - Never replace existing description
+2. **ALL code examples MUST use ADF code blocks** with syntax highlighting
+3. **NO Wiki markup** ({noformat}, {{...}}) - lacks syntax highlighting
+
+**Code Block Format Examples**:
+
+- Kotlin code: `code_block(code, 'kotlin')`
+- JSON examples: `code_block(json, 'json')`
+- Bash commands: `code_block(cmd, 'bash')`
+- Gherkin ACs: `code_block(scenarios, 'gherkin')`
+
+**Sections to APPEND**:
+
+1. "## Technical Notes"
+   - Module placement (with `kotlin` code blocks for imports)
+   - Reactive patterns (with `kotlin` code blocks for operators)
+   - Reuse strategy (with file paths in `code` marks)
+   - MongoDB entity standards (if creating new MongoDB entities):
+     - Must extend `AbstractEntity` from `services/.../common/domain/`
+     - Must use `@Document(collection = "collectionName")` annotation
+     - Must use `@TypeAlias("alias")` annotation
+     - Reference: `services/src/.../user/domain/User.kt`
+
+2. "## Testing Approach"
+   - Test cases enumeration
+   - Mock data (with `kotlin` code blocks)
+   - Coverage targets
+
+3. "## Dependencies"
+   - Jira links context
+   - Blocking/blocked by explanations
+
+4. "## Implementation Approach" ← NEW SECTION (from Topic 5 party-mode)
+   - **DTO Class Definitions** (kotlin code blocks):
+     - Request/Response DTOs with @Serializable
+     - Enum definitions with values
+     - Field annotations and validation
+   - **Entity/Domain Models** (kotlin code blocks):
+     - @Document entities extending base classes
+     - Field mappings and MongoDB annotations
+     - **MongoDB Entity Standards (MANDATORY)**:
+       - ALL MongoDB entities MUST extend `AbstractEntity` (from `services/.../common/domain/`)
+       - ALL MongoDB entities MUST use `@Document(collection = "collectionName")` annotation
+       - ALL MongoDB entities MUST use `@TypeAlias("alias")` annotation
+       - Reference implementation: `services/src/.../user/domain/User.kt`
+       - Code template:
+         ```kotlin
+         @Document(collection = "entityName")
+         @TypeAlias("entityAlias")
+         data class EntityName(
+           @Indexed(unique = true)
+           val uniqueField: String,
+           // ... other fields
+         ) : AbstractEntity()
+         ```
+   - **Service Method Signatures** (kotlin code blocks):
+     - Key service methods with reactive chains
+     - Validation logic examples
+     - Error handling patterns
+   - **Repository Interfaces** (kotlin code blocks):
+     - Repository interface signatures
+     - Custom query methods if needed
+   - **MongoDB Schema** (json/bash code blocks):
+     - Index creation commands
+     - Unique constraints
+     - Partial filter expressions
 
 **Parameters**:
 
 - cloudId: "{jira_cloud_id}"
 - issueIdOrKey: "{current_ticket}"
-- fields:
-  - description: Formatted markdown with:
-    - {original_description}
-    - Separator: "---"
-    - Section: "## Technical Notes" + {technical_notes}
-    - Section: "## Testing Approach" + {testing_approach}
-    - Section: "## Dependencies" + {dependencies}
+- sections_to_append: [
+  {heading: "Technical Notes", content: {technical_notes_adf}},
+  {heading: "Testing Approach", content: {testing_approach_adf}},
+  {heading: "Dependencies", content: {dependencies_adf}},
+  {heading: "Implementation Approach", content: {implementation_approach_adf}}
+  ]
 
 **Expected Return**: Success confirmation
 
-**Note**: Technical sections remain in markdown format
+**Validation**: jira-manager will verify all code blocks have `language` attribute set
 </action>
 
 <action>
@@ -957,20 +1073,13 @@ response: "{agent_response_from_party_mode}"
 **Operation**: Create Action Items using REST API v3 with ADF format (see jira-manager.md Section 2)
 
 **Delegation Instruction**:
-"Create Acceptance Criteria as Native Jira Action Items for {current_ticket}:
+"Create Preliminary Acceptance Criteria as Native Jira Action Items for {current_ticket}:
 
-Heading: 'Acceptance Criteria'
+Heading: 'Acceptance Criteria (Preliminary)'
 Items: Use localId naming ac-1, ac-2, ..., ac-N
 Format: Each AC as separate taskItem with state='TODO'
 
-Append to existing description (do not replace). Use ADF taskList/taskItem structure.
-
-**IMPORTANT - Code Examples in Technical Notes**: If technical notes contain code examples, use native ADF code blocks with syntax highlighting:
-
-- Use code_block(code, language) helper function (defined in jira-manager.md)
-- Set language attribute: 'kotlin', 'java', 'bash', 'json', 'yaml', etc.
-- DO NOT use Wiki markup {noformat} or {{...}} - these lack syntax highlighting
-- Example: code_block('fun example() { ... }', 'kotlin')"
+APPEND to existing description (do not replace). Use ADF taskList/taskItem structure."
 
 **Pass to jira-manager**:
 
@@ -984,12 +1093,12 @@ Append to existing description (do not replace). Use ADF taskList/taskItem struc
 
 1. Fetch current description ADF via REST API
 2. Parse existing content array
-3. Add heading: {"type": "heading", "attrs": {"level": 2}, "content": [{"type": "text", "text": "Acceptance Criteria"}]}
+3. Add heading: {"type": "heading", "attrs": {"level": 2}, "content": [{"type": "text", "text": "Acceptance Criteria (Preliminary)"}]}
 4. Add taskList with proper localId naming (ac-1, ac-2, ..., ac-N)
 5. PUT updated ADF back to ticket
 6. Verify Action Items appear in Jira UI
 
-**Fallback**: If ticket already has AC in mixed format, jira-manager appends new Action Items without duplicating
+**Note**: These are PRELIMINARY Action Items - will be converted to Gherkin format in Step 2.7a
 </action>
 
 ### 2.4: Add Confluence Links (if applicable)
@@ -1128,7 +1237,122 @@ Ticket skipped in this refinement session.
   <action>
   **Design Quality Gate PASSED** ✅
 
-Proceed with marking "Ready-for-Sprint":
+Proceeding to Gherkin AC creation and Clean Ticket verification...
+
+  <!-- Label application moved to Step 2.7a after verification -->
+  </action>
+</check>
+
+### 2.7a: Create Gherkin ACs + Delete Action Items + Verify Clean Ticket
+
+<action>
+**STEP 1: Convert Action Items to Gherkin Format**:
+
+1. **Read current preliminary Action Items** from ticket description (created in Step 2.3)
+2. **For each Action Item, create Gherkin scenario**:
+   - Extract AC title and details
+   - Convert to Given/When/Then format
+   - **Scenario**: {AC title}
+   - **Given**: {precondition}
+   - **When**: {action}
+   - **Then**: {expected outcome}
+
+3. **APPEND Gherkin scenarios + DELETE preliminary ACs**:
+
+**BMad-Master delegates to jira-manager**: Create Gherkin ACs in ADF format
+
+**Agent**: jira-manager (`~/.claude/agents/jira-manager.md`)
+
+**Operation**: update_description_with_gherkin
+
+**Parameters**:
+
+- cloudId: "{jira_cloud_id}"
+- issueIdOrKey: "{current_ticket}"
+- gherkin_content: {gherkin_scenarios_text}
+- operations:
+  1. APPEND heading: "## Acceptance Criteria (Gherkin)"
+  2. APPEND ADF codeBlock:
+     - type: "codeBlock"
+     - attrs: { "language": "gherkin" }
+     - content: Feature + Scenario blocks formatted as:
+
+       ```gherkin
+       Feature: {Story title}
+
+       Scenario: {AC 1 title}
+         Given {precondition}
+         When {action}
+         Then {expected outcome}
+       ```
+
+  3. DELETE: Remove heading "Acceptance Criteria (Preliminary)" and its taskList
+
+**CRITICAL FORMAT RULES** (MUST enforce):
+
+- Gherkin MUST be ADF codeBlock with attrs.language="gherkin"
+- NOT wiki markup (_Scenario:, _ Given, _ When, _ Then)
+- NOT {noformat} blocks
+- Structure: Feature → Scenario → Given/When/Then
+
+**Expected Return**:
+
+- {gherkin_block_added}: true/false
+- {preliminary_acs_deleted}: true/false
+- {format_valid}: true/false
+
+**Validation Gate**: ALL three flags must be true to proceed
+
+**Why Delete Preliminary Action Items**:
+
+- Gherkin scenarios are now the single source of truth for ACs
+- Prevents duplication and confusion
+- Maintains clean ticket standard
+  </action>
+
+<action>
+**STEP 2: Verify Clean Ticket Standard** (8 content + 3 format checks):
+
+**Content Checks** (existing):
+
+1. [ ] Summary (clear, concise, <255 chars)
+2. [ ] Description (all sections: Overview, Key Requirements, Technical Notes, Testing Approach)
+3. [ ] ACs exist (Gherkin format: Given/When/Then)
+4. [ ] Jira links (dependencies documented)
+5. [ ] Confluence links (if applicable)
+6. [ ] Story points (set via Agile API)
+7. [ ] Labels (BE/UI/Shared/Platform + Pre-Refined)
+8. [ ] Ready-for-Sprint eligibility
+
+**Format Compliance Checks** (NEW - MANDATORY): 9. [ ] Gherkin in ADF codeBlock (attrs.language="gherkin") - NOT wiki markup 10. [ ] Preliminary ACs deleted (no "Acceptance Criteria (Preliminary)" heading) 11. [ ] Code examples in ADF codeBlock - NOT {noformat} blocks
+
+**Verification Method**:
+
+- BMad-Master delegates to jira-manager: fetch_description_adf
+- Parse ADF structure and validate:
+  - Search for node: type="codeBlock", attrs.language="gherkin" → Check 9
+  - Search for heading text containing "Preliminary" → Check 10 (must NOT exist)
+  - Search for "{noformat}" text in any node → Check 11 (must NOT exist)
+
+**Verification Logic**:
+
+- IF all 11 checks pass → Set {clean_ticket_verified} = true
+- IF any check fails:
+  - Set {clean_ticket_verified} = false
+  - Report WHICH checks failed with specific errors:
+    - "Check 9 FAILED: Gherkin uses wiki markup instead of ADF codeBlock"
+    - "Check 10 FAILED: Preliminary ACs still exist in description"
+    - "Check 11 FAILED: Found {noformat} blocks - must use ADF codeBlock"
+  - **DO NOT apply "Ready-for-Sprint" label** (HARD GATE)
+  - Document gaps in Jira comment
+  - Skip to next ticket
+
+**Critical Rule**: ONLY apply "Ready-for-Sprint" if ALL 11 checks pass
+</action>
+
+<check if="clean_ticket_verified == true">
+  <action>
+  **Clean Ticket Verification PASSED** ✅
 
 **BMad-Master delegates to jira-manager**: Add "Ready-for-Sprint" label
 
@@ -1147,9 +1371,39 @@ Proceed with marking "Ready-for-Sprint":
 
 **Expected Return**: Success confirmation
 
-**Note**: jira-manager will fetch current labels, merge with new label, and update
+**Note**: Label applied ONLY after Gherkin ACs verified to exist
 </action>
 </check>
+
+<template-output section="gherkin_acs_created">
+## ✅ Gherkin ACs Created + Clean Ticket Verified
+
+**Gherkin Scenarios Added**: {{gherkin_count}} scenarios
+**Preliminary Action Items Deleted**: ✅
+
+**Clean Ticket Checklist**:
+
+1. {{#if summary_valid}}✅{{else}}❌{{/if}} Summary
+2. {{#if description_complete}}✅{{else}}❌{{/if}} Description
+3. {{#if gherkin_acs}}✅{{else}}❌{{/if}} ACs (Gherkin format)
+4. {{#if jira_links}}✅{{else}}❌{{/if}} Jira links
+5. {{#if confluence_links}}✅{{else}}ℹ️{{/if}} Confluence links ({{confluence_links_count}} pages)
+6. {{#if story_points_set}}✅{{else}}❌{{/if}} Story points ({{story_points}} SP)
+7. {{#if labels_valid}}✅{{else}}❌{{/if}} Labels
+8. {{#if clean_ticket_verified}}✅{{else}}❌{{/if}} Ready-for-Sprint
+
+{{#if clean_ticket_verified}}
+✅ **CLEAN TICKET VERIFIED** - Proceeding to mark "Ready-for-Sprint"
+{{else}}
+❌ **TICKET INCOMPLETE** - Missing {{missing_items_count}} items:
+{{#each missing_items}}
+
+- {{this}}
+  {{/each}}
+
+**Action**: Documented gaps in Jira comment, NOT marking "Ready-for-Sprint"
+{{/if}}
+</template-output>
 
 ### 2.8: Reply to Mentions (if mentions found)
 
@@ -1190,16 +1444,18 @@ _Addressed during Backlog Refinement session on {date}_
   </template-output>
 </check>
 
-<note>
-Mark {current_ticket} refined.
-Save state: refined_tickets[current_ticket] = {
-  refined: true,
-  ready_for_sprint: true,
-  mentions_addressed: {{mentions_found[current_ticket].length}}
-}
-
-Save state: mentions_found, mention_responses
-</note>
+<action>
+**Update state.json - Mark ticket refined**:
+```bash
+jq '.refined_tickets += [$ticket] | .current_ticket_index += 1 | .ticket_results[$ticket] = {
+  "refined": true,
+  "ready_for_sprint": true,
+  "mentions_addressed": $mentions_count
+}' --arg ticket "{current_ticket}" \
+   --argjson mentions_count '{{mentions_found[current_ticket].length}}' \
+   "{state_file}" > "{state_file}.tmp" && mv "{state_file}.tmp" "{state_file}"
+```
+</action>
 
 <template-output section="ticket_complete">
 ✅ **{current_ticket}** refined successfully!
@@ -1214,6 +1470,27 @@ Save state: mentions_found, mention_responses
 
 **Progress:** {{@index + 1}}/{{selected_tickets.length}} tickets refined
 </template-output>
+
+### 2.9: Cleanup Cached Tickets
+
+<check if="cached_ticket_folders is not empty">
+<action>
+**Remove Cached Ticket Folders**:
+
+For each folder in {cached_ticket_folders}:
+
+- Execute: rm -rf {cached_folder_path}
+- Log: "Cleaned up cached ticket folder: {cached_folder_path}"
+
+Clear {cached_ticket_folders} array
+</action>
+
+<template-output section="cleanup_complete">
+## 🧹 Cleanup Complete
+
+Removed {{cached_folder_count}} cached ticket folders.
+</template-output>
+</check>
 
 </for-each>
 
@@ -1233,11 +1510,7 @@ Save state: mentions_found, mention_responses
 {{#each selected_tickets}}
 
 - [{this}](https://nextgendevsolutions.atlassian.net/browse/{this}) - Ready for Sprint ✅
-  {{#if refinement_path[this] == 'pre-refined-light'}}
-  - Refinement Path: 🔄 Pre-Refined (Light validation + Gap analysis)
-    {{else if refinement_path[this] == 'full'}}
   - Refinement Path: 📋 Full Refinement (Deep validation)
-    {{/if}}
     {{#if design_sign_off[this].issues_fixed}}
   - UX Issues Fixed: {{design_sign_off[this].issues_fixed.length}}
     {{/if}}
@@ -1272,8 +1545,21 @@ Sally fixed UX issues during refinement:
 All tickets (except blocked) are now ready for sprint planning!
 </template-output>
 
-<note>Workflow complete. Delete state file.</note>
+<action>
+**Mark workflow complete and cleanup state**:
+```bash
+# Update state to completed
+jq '.status = "completed" | .completed_at = "'"$(date -Iseconds)"'"' \
+  "{state_file}" > "{state_file}.tmp" && mv "{state_file}.tmp" "{state_file}"
+
+# Optionally: Delete state folder after successful completion
+
+# rm -rf "{state_dir}"
+
+```
+</action>
 
 </step>
 
 </workflow>
+```

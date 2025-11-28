@@ -1,6 +1,6 @@
 name: backlog-refinement
-description: "Refine top backlog items with complete details, checklists, and mark Ready-for-Sprint"
-version: "1.0.0"
+description: "Refine backlog items with clean ticket output (8-item standard) and mark Ready-for-Sprint"
+version: "1.1.0"
 
 config_source: "{project-root}/bmad/nextgen-custom/config.yaml"
 installed_path: "{project-root}/bmad/nextgen-custom/workflows/backlog-refinement"
@@ -34,3 +34,9 @@ variables:
   refinement_path: "runtime"
   playwright_screenshots_captured: "runtime"
   prototype_validation_results: "runtime"
+  linked_tickets: "runtime" # Stores linked ticket keys (BE ↔ UI relationships)
+  cached_ticket_folders: "runtime" # Stores cached ticket folder paths for cleanup
+  api_contracts: "runtime" # Stores API contract design output
+  gherkin_acs: "runtime" # Stores Gherkin format ACs
+  clean_ticket_verified: "runtime" # Boolean - all 8 items verified
+  story_complexity: "runtime" # Stores complexity assessment (junior/simple eligible)
