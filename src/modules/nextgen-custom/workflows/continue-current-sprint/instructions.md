@@ -6,6 +6,24 @@
 
 <workflow name="continue-current-sprint" version="1.1.0">
 
+## Jira Configuration (Self-Sufficient Reference)
+
+**Project**: ESNG (eSIM NextGen)
+**Board ID**: 100 (`{jira_board_id}`)
+**Cloud ID**: `bfeeb19d-00e7-42ae-8fe6-d1decb3d2c30` (`{jira_cloud_id}`)
+**Project Key**: ESNG (`{jira_project_key}`)
+
+### Status Workflow
+
+```
+To Do → In Progress → In Review → In Test → QA PASS → Done
+```
+
+**Note**: Full Jira/Git workflow details are in the story-implementation workflow (SI).
+CCS handles story selection; SI handles the full dev cycle.
+
+---
+
 ## Recovery Protocol
 
 <check if="state_file_exists">
@@ -69,7 +87,7 @@ Store:
 **Parameters**:
 
 - cloudId: "{jira_cloud_id}"
-- jql: "project={jira_project_key} AND sprint={active_sprint_id} AND status NOT IN (Done, Merged) ORDER BY Rank ASC"
+- jql: "project={jira_project_key} AND sprint={active_sprint_id} AND status NOT IN (Done, Merged, 'QA PASS') ORDER BY Rank ASC, priority DESC"
 - maxResults: 50
 - fields: ["key", "summary", "status", "priority", "labels", "customfield_10016", "sprint"]
 
@@ -269,7 +287,7 @@ Inform {user_name} in {communication_language}: Delegating to story-implementati
 <action>
 **MANDATORY**: Load story-implementation instructions into context BEFORE executing
 
-**File**: `/Users/arthur/Dropbox/Workspaces/NextGenDev/esim-nextgen/bmad/workflows/story-implementation/instructions.md`
+**File**: `bmad/nextgen-custom/workflows/story-implementation/instructions.md`
 
 **Use Read tool** to load complete instructions (1,015 lines) - NO offset/limit
 
@@ -368,7 +386,7 @@ git rev-parse --abbrev-ref HEAD
 <action>
 **BMad-Master delegates to story-implementation workflow**:
 
-**Workflow**: `bmad/workflows/story-implementation/instructions.md`
+**Workflow**: `bmad/nextgen-custom/workflows/story-implementation/instructions.md`
 **Inputs**:
 
 - story_key: "{{selected_story.key}}"
@@ -392,7 +410,7 @@ git rev-parse --abbrev-ref HEAD
 ```
 STATUS: COMPLETE
 PHASE: complete
-TICKET_STATUS: Done (after PO approval from QA PASS)
+TICKET_STATUS: QA PASS (PO manually transitions to Done - workflow NEVER transitions to Done)
 MERGE_COMMIT: {hash}
 ITERATIONS: {count}
 ```

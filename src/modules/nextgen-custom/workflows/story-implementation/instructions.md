@@ -16,6 +16,98 @@
 
 ---
 
+## Jira Configuration (Self-Sufficient Reference)
+
+**Project**: ESNG (eSIM NextGen)
+**Board ID**: 100
+**Cloud ID**: `bfeeb19d-00e7-42ae-8fe6-d1decb3d2c30`
+
+### Status Workflow (Board Columns)
+
+```
+To Do → In Progress → In Review → In Test → QA PASS → Done
+         ↑                ↓           ↓
+         └────────────────┴───────────┘ (rejected/failed → back to In Progress)
+```
+
+### Fetching Transition IDs
+
+**BEFORE any status transition**, fetch available transitions:
+
+```
+mcp__MCP_DOCKER__jira_get_transitions(issue_key: "{story_key}")
+```
+
+**Parse response** to get transition IDs:
+
+- Look for `name` field matching target status
+- Store `id` field as `{{transition_id}}`
+
+**Example Response**:
+
+```json
+{
+  "transitions": [
+    { "id": "21", "name": "In Progress" },
+    { "id": "31", "name": "In Review" },
+    { "id": "41", "name": "In Test" },
+    { "id": "51", "name": "QA PASS" },
+    { "id": "61", "name": "Done" }
+  ]
+}
+```
+
+**Note**: Transition IDs may vary - ALWAYS fetch before transitioning.
+
+### Git Branching (Embedded Reference)
+
+```
+main (stable, protected)
+└── sprint/{N}-{goal} (sprint branch from main)
+    ├── feature/ESNG-{#}-{description}
+    ├── bugfix/ESNG-{#}-{description}
+    └── hotfix/{description}
+```
+
+**Branch Naming**:
+
+- Sprint: `sprint/{number}-{goal-slug}`
+- Feature: `feature/ESNG-{issue-key}-{description-slug}`
+- Bugfix: `bugfix/ESNG-{issue-key}-{description-slug}`
+
+**Merge Flow**: Feature → Sprint branch (during sprint) → Main (at sprint close via PR)
+
+---
+
+## BMad-Master Role (CRITICAL)
+
+🚨 **BMad-Master is a PURE ORCHESTRATOR - NOT a developer, reviewer, or investigator.**
+
+### NEVER (Strict Prohibitions)
+
+- ❌ Write, edit, or modify ANY code files directly
+- ❌ Investigate, debug, or analyze code issues
+- ❌ Fix tests, adjust implementations, or apply patches
+- ❌ Make "quick fixes" even when the solution seems obvious
+- ❌ Reason about code problems beyond routing to correct agent
+
+### ALWAYS (Required Actions)
+
+- ✅ Delegate ALL code work to specialized agents (developer, code-reviewer, qa)
+- ✅ Manage Jira status transitions (fetch transition IDs, execute transitions)
+- ✅ Track workflow state and progress
+- ✅ Route failures to appropriate agents with context
+
+### On ANY Failure (QA FAIL, Review Rejection, Test Failure)
+
+1. **IMMEDIATELY** transition Jira ticket back to "In Progress"
+2. **IMMEDIATELY** delegate to appropriate agent with failure context
+3. **NEVER** attempt to fix the issue directly
+
+**Violation of this rule breaks the workflow contract and agent specialization model.**
+
+---
+
 ## Recovery Protocol
 
 <check if="state_file_exists">
@@ -64,61 +156,72 @@ Inform {user_name} in {communication_language}: Starting story implementation - 
 **Storage**: Store only {story_key}, {{story_labels}}, {{sprint_number}} in memory
 </action>
 
-### 1.2: Validate Dependencies & Git Status 🚨
+### 1.2: Create Cache & Validate Dependencies 🚨
 
 <action>
-**BMad-Master delegates to jira-manager**: Check issue links for blockers
+**Step 1: Create State Folder** (prerequisite for cache)
+
+```bash
+mkdir -p .bmad/state/story-{story_key}
+mkdir -p .bmad/state/story-{story_key}/confluence
+```
+
+</action>
+
+<action>
+**Step 2: Create Cache via jira-manager** (BEFORE checking blockers)
+
+**BMad-Master delegates to jira-manager**: Cache ticket {story_key}
 
 **Agent**: jira-manager (`~/.claude/agents/jira-manager.md`)
 
-**Operation**: Fetch issue with issuelinks field
+**Delegation Instruction**:
+"Use jira-manager agent to cache {story_key}"
 
-**REST API Call**:
+**jira-manager will create**:
+
+- ticket.md (core ticket details)
+- comments/ (individual comment files)
+- attachments/ (downloaded attachments)
+- confluence/ (if Confluence links exist)
+- **related-tickets.md** (issue links - contains blocker info)
+
+**Validate cache created**:
 
 ```bash
-curl -s "https://api.atlassian.com/ex/jira/{jira_cloud_id}/rest/api/3/issue/{story_key}?fields=issuelinks,status&expand=issuelinks.issues" \
-  -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}"
+TICKET_CACHE=".bmad/state/story-{story_key}/ticket.md"
+if [ ! -f "$TICKET_CACHE" ] || [ ! -s "$TICKET_CACHE" ]; then
+  echo "❌ ERROR: Cache creation failed"
+  exit 1
+fi
+echo "✅ Cache created successfully"
 ```
 
-**Parse Response**:
+</action>
 
-- Extract `fields.issuelinks[]` array
-- For each link, check:
-  - `inwardIssue` with `type.inward` matching: "is blocked by", "depends on", "has to be done after"
-  - `outwardIssue` with `type.outward` == "has to be done before" (REVERSE: this ticket must complete before outward)
+<action>
+**Step 3: Check Blockers FROM CACHE** (no additional API call)
+
+**Read**: `.bmad/state/story-{story_key}/related-tickets.md`
+
+**Parse related-tickets.md for blocking relationships**:
+
+- Look for "Blocked by", "Depends on", "Has to be done after" sections
+- Extract linked issue keys and statuses
 
 **Store**:
 
 - {{blocking_issues}} = array of {key, status, linkType}
 
-**Delegation Instruction to jira-manager**:
-"Fetch {story_key} with issuelinks field and expand=issuelinks.issues. Parse all issue links and identify blocking relationships:
-
-1. inwardIssue links with types: 'is blocked by', 'depends on', 'has to be done after'
-2. outwardIssue links with type: 'has to be done before' (reverse relationship)
-
-For each blocker found:
-
-- Extract blocker status from embedded issuelinks data (no additional API call needed)
-- Return: {key, summary, status, linkType}
-
-CRITICAL: If blocker status != 'Done', this is a BLOCKING condition."
-</action>
-
-<action>
-**Validate Blocker Status** (using embedded data from Step 1.2):
-
 Filter {{active_blockers}} = empty array
 
-For each link in blocking_issues:
+For each blocker in blocking_issues:
 
-- Extract blocker from embedded issuelinks data
-- Check blocker.fields.status.name (already embedded via expand=issuelinks.issues)
 - If status NOT IN ['Done', 'Merged', 'QA PASS']:
   - Add to {{active_blockers}} array
-  - Store: {key: blocker.key, summary: blocker.fields.summary, status: blocker.fields.status.name, linkType: link.type.name}
+  - Store: {key, summary, status, linkType}
 
-**Result**: {{active_blockers}} array populated WITHOUT additional API calls
+**Result**: {{active_blockers}} array populated from cache (0 additional API calls)
 </action>
 
 <check if="active_blockers.length > 0">
@@ -749,6 +852,12 @@ Inform {user_name} in {communication_language}: Delegating to developer agent fo
 - ❌ Create feature branch (Step 1.5 already created)
 - ❌ Transition to "In Progress" (Step 1.6 already transitioned)
 - ❌ Transition to "In Review" (Step 2.3 will transition after agent completes)
+
+🚨 **CRITICAL: Ticket Description May Contain Binding Specifications**
+
+- If Description contains class definitions, data models, or code specs → Developer MUST implement EXACTLY as specified
+- Developer must NOT create alternative implementations when explicit specs exist in ticket
+- This applies to class names, field names, method signatures, and data structures
 
 **NO content passed** - Agent loads from pre-created cache autonomously
 
@@ -1546,7 +1655,7 @@ REPORT:
 
 <checkpoint id="phase_transition">
 Set current_phase = "complete"
-Save state: merge_commit_hash, current_status = "Done"
+Save state: merge_commit_hash, current_status = "QA PASS"
 </checkpoint>
 
 ### 5.3: Cleanup State Folder Cache 🆕
@@ -1575,6 +1684,14 @@ Inform {user_name} in {communication_language}: Story implementation complete - 
 </communication>
 
 <action>Set {current_phase} = "complete"</action>
+
+### 🚨 CRITICAL: Do NOT Transition to "Done"
+
+**Jira ticket remains at "QA PASS" status.**
+
+- ❌ NEVER transition to "Done" - PO owns final acceptance
+- ❌ NEVER assume workflow completion = ticket completion
+- ✅ Ticket stays at "QA PASS" until PO manually approves
 
 ## <template-output section="story_complete">
 

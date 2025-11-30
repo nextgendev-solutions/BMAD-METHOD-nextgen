@@ -120,10 +120,39 @@ Inform {user_name} in {communication_language}: Generating sprint closure summar
 
 1. Review PR: {{pr_url}}
 2. Approve and merge PR
-3. Close sprint in Jira
-4. Run retrospective: `/retrospective Sprint {sprint_number}`
+3. Run retrospective: `/retrospective Sprint {sprint_number}`
 
 Sprint ready for final merge approval!
+</template-output>
+
+<checkpoint id="phase_complete">Save state: summary displayed</checkpoint>
+
+</step>
+
+<step n="4" goal="Close Sprint in Jira">
+<communication>
+Inform {user_name} in {communication_language}: Closing sprint in Jira
+</communication>
+
+<action>
+**BMad-Master delegates to jira-manager**: Close sprint in Jira
+
+**Agent**: jira-manager (`~/.claude/agents/jira-manager.md`)
+**Operation**: jira_update_sprint
+**Parameters**:
+
+- sprint_id: "{{sprint_id}}"
+- state: "closed"
+
+**Expected Return**: Sprint closure confirmation
+</action>
+
+<template-output section="jira-closed">
+## Jira Sprint Closed
+
+Sprint {{sprint_name}} (ID: {{sprint_id}}) has been closed in Jira.
+
+Velocity and sprint metrics are now available in Jira reports.
 </template-output>
 
 <checkpoint id="phase_complete">Workflow complete. Delete state file.</checkpoint>
