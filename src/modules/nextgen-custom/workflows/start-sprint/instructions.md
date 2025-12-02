@@ -143,7 +143,41 @@
 <note>Store sprint_branch value</note>
 </step>
 
-<step n="6" goal="Report sprint ready status">
+<step n="6" goal="Create sprint state file for tracking">
+<action>Communicate in {communication_language} with {user_name}</action>
+
+<action>Create state folder and file for sprint tracking:</action>
+
+```bash
+mkdir -p .bmad/state/sprint-{sprint_number}
+```
+
+<action>Create state.json with sprint metadata:</action>
+
+```json
+{
+  "sprint_number": "{sprint_number}",
+  "sprint_id": "{sprint_id}",
+  "sprint_name": "{sprint_name}",
+  "sprint_goal": "{sprint_goal}",
+  "sprint_branch": "{sprint_branch}",
+  "tickets": "{sprint_tickets}",
+  "created_at": "{timestamp}"
+}
+```
+
+<action>Write state file:</action>
+
+```bash
+cat > .bmad/state/sprint-{sprint_number}/state.json << 'EOF'
+{state_json_content}
+EOF
+```
+
+<note>Sprint state file enables workflow continuity after session compaction</note>
+</step>
+
+<step n="7" goal="Report sprint ready status">
 <action>Communicate in {communication_language} with {user_name}</action>
 
 <report>
