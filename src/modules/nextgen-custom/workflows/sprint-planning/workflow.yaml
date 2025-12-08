@@ -26,6 +26,7 @@ variables:
   sprint_goal: "runtime"
   total_story_points: "runtime"
   gherkin_scenarios: "runtime"
+  critical_notes: "runtime"
 
 # Gherkin configuration
 gherkin:

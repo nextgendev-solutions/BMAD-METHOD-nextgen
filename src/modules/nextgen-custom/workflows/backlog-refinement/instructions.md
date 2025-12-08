@@ -12,6 +12,65 @@
 
 <check if="state_file_exists">
   <action>Load state → Verify refined tickets in Jira → Prompt user to resume</action>
+
+  <check if="critical_notes exists in state">
+    <template-output>
+## 📋 Session Critical Notes (from previous session)
+
+{{#each critical_notes}}
+{{@index + 1}}. {{this}}
+{{/each}}
+</template-output>
+
+    <ask>
+
+Verify critical_notes are still valid:
+
+- Press Enter to confirm all
+- OR type new/modified critical_notes (comma-separated)
+- OR type "clear" to remove all
+  </ask>
+
+      <action>
+
+  If user provides input → Update {critical_notes} in state file
+  If "clear" → Set {critical_notes} = []
+  Save state immediately
+  </action>
+  </check>
+  </check>
+
+---
+
+## Post-Compaction Re-Anchor Protocol
+
+<check if="conversation_resumed_after_compaction">
+  <critical>
+  IMMEDIATELY upon detecting session resumption:
+  1. Hand over to bmad-master if not already active
+  2. Read state file from {cache_dir}/state.json
+  3. Display critical_notes for user re-confirmation
+  4. Resume from {current_ticket_index}
+  </critical>
+
+  <template-output>
+## 🔄 Session Resumed After Compaction
+
+**Progress**: Ticket {{current_ticket_index + 1}}/{{selected_tickets.length}}
+**Current**: {selected_tickets[current_ticket_index]}
+
+{{#if critical_notes.length > 0}}
+**⚠️ Critical Notes (re-read now):**
+{{#each critical_notes}}
+
+- {{this}}
+  {{/each}}
+  {{/if}}
+
+Continuing refinement...
+</template-output>
+
+<ask>Confirm to continue, or update critical_notes:</ask>
 </check>
 
 ---
@@ -58,6 +117,31 @@ Select items to refine (comma-separated numbers):
 
 <note>Save state: selected_tickets</note>
 
+<check if="critical_notes not initialized">
+  <ask>
+(Optional) Any critical_notes for this refinement session?
+
+Examples:
+
+- "ultrathink" - Use deep reasoning
+- "no contracts" - Skip contract generation
+- "match description structure" - Enforce Jira format
+- "verify backend APIs ready" - Check dependencies
+
+Enter critical_notes (comma-separated) or press Enter to skip:
+</ask>
+
+  <action>
+If user provides critical_notes:
+  Parse comma-separated → {critical_notes} array
+  Save to state file immediately
+Else:
+  Set {critical_notes} = []
+  </action>
+</check>
+
+<note>Save state: critical_notes</note>
+
 </step>
 
 ---
@@ -69,6 +153,17 @@ Select items to refine (comma-separated numbers):
 <for-each ticket in selected_tickets>
 
 <action>Set {current_ticket_index} = {{@index}}</action>
+
+<check if="critical_notes.length > 0">
+  <template-output>
+## ⚠️ CRITICAL NOTES - Apply to {current_ticket}:
+
+{{#each critical_notes}}
+
+- {{this}}
+  {{/each}}
+  </template-output>
+  </check>
 
 ### 2.1: Fetch Ticket and Confluence Docs
 

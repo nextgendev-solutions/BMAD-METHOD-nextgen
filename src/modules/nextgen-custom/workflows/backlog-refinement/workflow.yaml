@@ -34,3 +34,4 @@ variables:
   refinement_path: "runtime"
   playwright_screenshots_captured: "runtime"
   prototype_validation_results: "runtime"
+  critical_notes: "runtime"

@@ -20,11 +20,78 @@ This workflow orchestrates multi-agent sprint planning. When providing updates:
 
 ---
 
+## Session Critical Notes Initialization
+
+<template-output>
+## 📋 Sprint Planning Critical Notes
+
+Pre-defined critical_notes for this workflow:
+
+1. ultrathink - Use deep reasoning for complex decisions
+2. follow workflow STEP by STEP - Do not skip any step
+3. verify all checklists are ADF Action Items - Not Wiki format
+4. ensure Gherkin ACs use proper syntax highlighting
+5. rank tickets by dependency order - Blockers first
+6. verify story points are set before sprint creation
+7. do not override jira ticket description - Only add the checklist items
+8. cache each jira ticket before processing
+9. handover to bmad-master after compaction to continue
+10. explore codebase BEFORE generating dev checklist - Find reusable patterns
+    </template-output>
+
+<ask>
+Review critical_notes above:
+- Press Enter to accept all pre-defined critical_notes
+- OR type additional critical_notes (comma-separated)
+- OR type "custom: note1, note2" to replace with custom critical_notes only
+
+Enter choice:
+</ask>
+
+<action>
+If user presses Enter → Use pre-defined critical_notes array
+If user provides additions → Merge with pre-defined critical_notes
+If user types "custom:" → Parse and use only custom critical_notes
+
+Initialize {critical_notes} array
+Save to state file immediately: .bmad/state/sprint-planning-{session_id}/state.json
+</action>
+
+<note>Save state: critical_notes</note>
+
+---
+
 ## Recovery Protocol (Execute FIRST if state file exists)
 
 <check if="state_file_exists">
   <action>Load state file from .bmad/state/sprint-planning-*.json</action>
-  <action>Extract: sprint_number, selected_tickets, completed_tickets, current_ticket_index</action>
+  <action>Extract: sprint_number, selected_tickets, completed_tickets, current_ticket_index, critical_notes</action>
+
+  <check if="critical_notes exists in state">
+    <template-output>
+## 📋 Session Critical Notes (from previous session)
+
+{{#each critical_notes}}
+{{@index + 1}}. {{this}}
+{{/each}}
+</template-output>
+
+    <ask>
+
+Verify critical_notes are still valid:
+
+- Press Enter to confirm all
+- OR type new/modified critical_notes (comma-separated)
+- OR type "clear" to remove all
+  </ask>
+
+      <action>
+
+  If user provides input → Update {critical_notes} in state file
+  If "clear" → Set {critical_notes} = []
+  Save state immediately
+  </action>
+  </check>
 
 ### Verify Completed Work in Jira
 
@@ -66,6 +133,40 @@ Resume from checkpoint? (yes/no)
     <action>Delete state file</action>
     <action>Continue with Step 1 (fresh start)</action>
   </check>
+</check>
+
+---
+
+## Post-Compaction Re-Anchor Protocol
+
+<check if="conversation_resumed_after_compaction">
+  <critical>
+  IMMEDIATELY upon detecting session resumption:
+  1. Hand over to bmad-master if not already active
+  2. Read state file from {cache_dir}/state.json
+  3. Display critical_notes for user re-confirmation
+  4. Resume from {current_ticket_index}
+  </critical>
+
+  <template-output>
+## 🔄 Session Resumed After Compaction
+
+**Progress**: Ticket {{current_ticket_index + 1}}/{{selected_tickets.length}}
+**Current**: {selected_tickets[current_ticket_index]}
+**Sprint**: {sprint_number}
+
+{{#if critical_notes.length > 0}}
+**⚠️ Critical Notes (re-read now):**
+{{#each critical_notes}}
+
+- {{this}}
+  {{/each}}
+  {{/if}}
+
+Continuing sprint planning...
+</template-output>
+
+<ask>Confirm to continue, or update critical_notes:</ask>
 </check>
 
 ---
@@ -245,6 +346,17 @@ Display to user:
 
 <action>Set {current_ticket_index} = {{@index}}</action>
 <action>Set {current_ticket} = {ticket}</action>
+
+<check if="critical_notes.length > 0">
+  <template-output>
+## ⚠️ CRITICAL NOTES - Apply to {current_ticket}:
+
+{{#each critical_notes}}
+
+- {{this}}
+  {{/each}}
+  </template-output>
+  </check>
 
 ## <template-output section="ticket_progress">
 
