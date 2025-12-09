@@ -1,0 +1,165 @@
+# IO Adapter Configuration for NextGen Custom
+# This file defines read/write adapters injected into workflow.xml at install time
+#
+# HOW IT WORKS:
+# 1. During `npm run install:bmad`, the installer reads this config
+# 2. For each adapter, it finds the insertion point via regex pattern
+# 3. Injects the content at that location
+# 4. Result: Installed workflow.xml has Confluence/Jira instructions baked in
+#
+# CONFIG SOURCE:
+# All adapters use FIXED config path: {bmad_folder}/nextgen-custom/config.yaml
+# This ensures all agents (PM, Architect, DEV, etc.) get Jira/Confluence integration
+# regardless of which module's workflow they're running.
+#
+# PATTERN SYNTAX:
+# - Uses JavaScript regex syntax
+# - Must include capture group(s) for insertion positioning
+# - For insert_after: $1 represents matched content, new content appended after
+# - For insert_before: $1 is prefix, $2 is the anchor, content inserted between
+
+enabled: true
+
+adapters:
+  # Read Adapter - Check Confluence for existing documents before local file read
+  # Injected after the discover_inputs protocol completes
+  confluence_read:
+    description: "Check Confluence for existing documents before local files"
+    target_file: "core/tasks/workflow.xml"
+    insert_after_pattern: (name="discover_inputs"[\s\S]*?</protocol>)
+    content: |
+
+      <protocol name="confluence_read_adapter" desc="Check Confluence before local file read">
+        <objective>For PRD, Architecture, Epic documents - check Confluence first</objective>
+        <critical>Only execute if nextgen-custom module is installed and confluence_space_key is configured</critical>
+        <config_source>{bmad_folder}/nextgen-custom/config.yaml</config_source>
+
+        <flow>
+          <step n="1" title="Check Document Type for Confluence">
+            <check if="pattern_name matches prd OR architecture OR epics OR stories">
+              <action>Read confluence_space_key and project_name from config_source above</action>
+              <action>Query Confluence space {confluence_space_key} for document matching pattern_name</action>
+              <action>Search by title convention: {project_name} - {pattern_name}</action>
+              <action>Use MCP Confluence tools: confluence_search, confluence_get_page</action>
+            </check>
+          </step>
+
+          <step n="2" title="Use Confluence Content if Found">
+            <check if="Confluence page exists for this document type">
+              <action>Download page content as markdown using confluence_get_page</action>
+              <action>Store in {pattern_name_content} variable (overriding any local file content)</action>
+              <action>Store confluence_page_id in session for write-back later</action>
+              <action>Report: "Loaded {pattern_name} from Confluence page {page_id}"</action>
+            </check>
+            <check if="Confluence page not found">
+              <action>Continue with local file content from discover_inputs (no override)</action>
+              <action>Report: "No Confluence page for {pattern_name}, using local file"</action>
+            </check>
+          </step>
+        </flow>
+      </protocol>
+
+  # Read Adapter - Pull story/task data from Jira before local file read
+  # Injected after the discover_inputs protocol completes
+  jira_read:
+    description: "Pull story/task data from Jira before local files"
+    target_file: "core/tasks/workflow.xml"
+    insert_after_pattern: (name="discover_inputs"[\s\S]*?</protocol>)
+    content: |
+
+      <protocol name="jira_read_adapter" desc="Pull story/task data from Jira before local file read">
+        <objective>For Stories and Tasks - check Jira for latest content first</objective>
+        <critical>Only execute if nextgen-custom module is installed and jira_project_key is configured</critical>
+        <config_source>{bmad_folder}/nextgen-custom/config.yaml</config_source>
+
+        <flow>
+          <step n="1" title="Check for Jira Issue Reference">
+            <action>Read jira_project_key from config_source above</action>
+            <check if="workflow involves story OR task content">
+              <check if="jira_issue_key provided in workflow input OR frontmatter">
+                <action>Fetch issue details using jira_get_issue with key {jira_issue_key}</action>
+                <action>Extract: summary, description, acceptance criteria, status, assignee</action>
+                <action>Store jira_issue_key in session for write-back later</action>
+              </check>
+              <check if="epic_key provided but no specific story">
+                <action>Fetch epic's child issues using jira_search with parent={epic_key}</action>
+                <action>List available stories for user selection</action>
+              </check>
+            </check>
+          </step>
+
+          <step n="2" title="Use Jira Content if Found">
+            <check if="Jira issue data retrieved">
+              <action>Parse Jira description and acceptance criteria</action>
+              <action>Store in {story_content} or {task_content} variable</action>
+              <action>Preserve jira_issue_key, status, and metadata for sync</action>
+              <action>Report: "Loaded {issue_type} from Jira: {jira_issue_key}"</action>
+            </check>
+            <check if="No Jira issue found">
+              <action>Continue with local file content from discover_inputs</action>
+              <action>Report: "No Jira issue linked, using local file"</action>
+            </check>
+          </step>
+
+          <step n="3" title="Sync Status Context">
+            <action>Store current Jira status in session (for workflow awareness)</action>
+            <action>Store sprint assignment if present</action>
+            <action>Store linked epic key for parent reference</action>
+          </step>
+        </flow>
+      </protocol>
+
+  # Write Adapter - Sync outputs to Confluence after local save
+  # Injected inside the template-output handler before content generation
+  confluence_write:
+    description: "Sync outputs to Confluence after local save"
+    target_file: "core/tasks/workflow.xml"
+    insert_before_pattern: (<if tag="template-output">[\s\S]*?)(<mandate>Generate content for this section</mandate>)
+    content: |
+      <confluence-sync-adapter critical="true">
+            <objective>After saving to local file, sync content to Confluence</objective>
+            <config_source>{bmad_folder}/nextgen-custom/config.yaml</config_source>
+            <check if="output type matches PRD OR Architecture OR Epic OR Story">
+              <action>Read confluence_space_key and project_name from config_source above</action>
+              <action>After local file save completes in this template-output section:</action>
+              <check if="confluence_page_id exists from read adapter session">
+                <action>Update existing Confluence page using confluence_update_page with page_id</action>
+                <action>Set version_comment to "Updated via BMAD workflow"</action>
+              </check>
+              <check if="no confluence_page_id (new document)">
+                <action>Create new page using confluence_create_page</action>
+                <action>Space: {confluence_space_key}</action>
+                <action>Title: {project_name} - {document_type}</action>
+                <action>Store new page_id for future updates</action>
+              </check>
+              <action>Report: "Synced to Confluence: {page_url}"</action>
+            </check>
+          </confluence-sync-adapter>
+
+  # Write Adapter - Create/update Jira issues for stories and tasks
+  # Injected in template-output handler (pairs with jira_read)
+  jira_write:
+    description: "Create/update Jira issues for stories and tasks"
+    target_file: "core/tasks/workflow.xml"
+    insert_before_pattern: (<if tag="template-output">[\s\S]*?)(<mandate>Generate content for this section</mandate>)
+    content: |
+      <jira-sync-adapter>
+            <objective>Sync stories and tasks to Jira after local save</objective>
+            <config_source>{bmad_folder}/nextgen-custom/config.yaml</config_source>
+            <check if="output type matches Story OR Task definition">
+              <action>Read jira_project_key from config_source above</action>
+              <action>After local file save completes:</action>
+              <check if="jira_issue_key exists in document YAML frontmatter">
+                <action>Update existing Jira issue using jira_update_issue</action>
+                <action>Sync title, description, acceptance criteria</action>
+              </check>
+              <check if="no jira_issue_key (new story/task)">
+                <action>Create issue using jira_create_issue</action>
+                <action>Project: {jira_project_key}</action>
+                <action>Set issue type based on document type (Story or Task)</action>
+                <action>Link to parent Epic if epic_key in frontmatter</action>
+                <action>Add jira_issue_key to document frontmatter for future syncs</action>
+              </check>
+              <action>Report: "Synced to Jira: {issue_key}"</action>
+            </check>
+          </jira-sync-adapter>
