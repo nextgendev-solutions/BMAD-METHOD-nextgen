@@ -39,6 +39,11 @@ module.exports = {
         return;
       }
 
+      // Handle reinstall by setting force flag
+      if (config.actionType === 'reinstall') {
+        config._requestedReinstall = true;
+      }
+
       // Regular install/update flow
       const result = await installer.install(config);
 
@@ -50,11 +55,14 @@ module.exports = {
 
       // Check if installation succeeded
       if (result && result.success) {
+        console.log(chalk.green('\n✨ Installation complete!'));
+        console.log(chalk.cyan('BMAD Core and Selected Modules have been installed to:'), chalk.bold(result.path));
+        console.log(chalk.yellow('\nThank you for helping test the early release version of the new BMad Core and BMad Method!'));
+        console.log(chalk.cyan('Stable Beta coming soon - please read the full README.md and linked documentation to get started!'));
+
         // Run AgentVibes installer if needed
         if (result.needsAgentVibes) {
-          // Add some spacing before AgentVibes setup
-          console.log('');
-          console.log(chalk.magenta('🎙️  AgentVibes TTS Setup'));
+          console.log(chalk.magenta('\n🎙️  AgentVibes TTS Setup'));
           console.log(chalk.cyan('AgentVibes provides voice synthesis for BMAD agents with:'));
           console.log(chalk.dim('  • ElevenLabs AI (150+ premium voices)'));
           console.log(chalk.dim('  • Piper TTS (50+ free voices)\n'));
@@ -83,7 +91,6 @@ module.exports = {
               shell: true,
             });
             console.log(chalk.green('\n✓ AgentVibes installation complete'));
-            console.log(chalk.cyan('\n✨ BMAD with TTS is ready to use!'));
           } catch {
             console.log(chalk.yellow('\n⚠ AgentVibes installation was interrupted or failed'));
             console.log(chalk.cyan('You can run it manually later with:'));

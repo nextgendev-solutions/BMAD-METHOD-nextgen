@@ -1,10 +1,10 @@
 ---
-installed_path: '{project-root}/_bmad/bmb/workflows/create-module'
+installed_path: '{project-root}/{bmad_folder}/bmb/workflows/create-module'
 nextStepFile: '{installed_path}/steps/step-11-validate.md'
-modulePlanFile: '{bmb_creations_output_folder}/{module_name}/module-plan-{module_name}.md'
-moduleTodoFile: '{bmb_creations_output_folder}/{module_name}/TODO.md'
-advancedElicitationTask: '{project-root}/_bmad/core/tasks/advanced-elicitation.xml'
-partyModeWorkflow: '{project-root}/_bmad/core/workflows/party-mode/workflow.md'
+modulePlanFile: '{custom_module_location}/{module_name}/module-plan-{module_name}.md'
+moduleTodoFile: '{custom_module_location}/{module_name}/TODO.md'
+advancedElicitationTask: '{project-root}/{bmad_folder}/core/tasks/advanced-elicitation.xml'
+partyModeWorkflow: '{project-root}/{bmad_folder}/core/workflows/party-mode/workflow.md'
 ---
 
 # Step 10: Generate Development Roadmap
@@ -75,7 +75,7 @@ I'll organize the remaining work into logical phases to ensure a successful modu
 
 ### 3. Generate TODO.md
 
-Create file: {bmb_creations_output_folder}/{module_name}/TODO.md
+Create file: {custom_module_location}/{module_name}/TODO.md
 
 ````markdown
 # {module_display_name} Development Roadmap
@@ -207,10 +207,9 @@ workflow {workflow_name}
 ├── workflows/       # ✅ Structure created, plans written
 ├── tasks/           # ✅ Created
 ├── templates/       # ✅ Created
-├── data/            # ✅ Created
+├── data/           # ✅ Created
 ├── _module-installer/  # ✅ Configured
-└── README.md        # ✅ Complete
-└── module.yaml      # ✅ Complete
+└── README.md       # ✅ Complete
 ```
 
 ## Completion Criteria
@@ -273,7 +272,7 @@ Update module-plan.md with roadmap section:
 ## Development Roadmap
 
 ### TODO.md Created
-- Location: {bmb_creations_output_folder}/{module_name}/TODO.md
+- Location: {custom_module_location}/{module_name}/TODO.md
 - Phases defined: 3
 - Immediate tasks prioritized
 

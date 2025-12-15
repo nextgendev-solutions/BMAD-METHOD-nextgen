@@ -1,9 +1,9 @@
 ---
-installed_path: '{project-root}/_bmad/bmb/workflows/create-module'
+installed_path: '{project-root}/{bmad_folder}/bmb/workflows/create-module'
 nextStepFile: '{installed_path}/steps/step-06-agents.md'
-modulePlanFile: '{bmb_creations_output_folder}/{module_name}/module-plan-{module_name}.md'
-advancedElicitationTask: '{project-root}/_bmad/core/tasks/advanced-elicitation.xml'
-partyModeWorkflow: '{project-root}/_bmad/core/workflows/party-mode/workflow.md'
+modulePlanFile: '{custom_module_location}/{module_name}/module-plan-{module_name}.md'
+advancedElicitationTask: '{project-root}/{bmad_folder}/core/tasks/advanced-elicitation.xml'
+partyModeWorkflow: '{project-root}/{bmad_folder}/core/workflows/party-mode/workflow.md'
 ---
 
 # Step 5: Plan Module Configuration
@@ -184,8 +184,8 @@ Update module-plan.md with configuration section:
 
 ### Result Configuration Structure
 
-The module.yaml will generate:
-- Module configuration at: _bmad/{module_code}/config.yaml
+The install-config.yaml will generate:
+- Module configuration at: {bmad_folder}/{module_code}/config.yaml
 - User settings stored as: [describe structure]
 ````
 

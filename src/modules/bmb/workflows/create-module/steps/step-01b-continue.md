@@ -1,5 +1,5 @@
 ---
-modulePlanFile: '{bmb_creations_output_folder}/{module_name}/module-plan-{module_name}.md'
+modulePlanFile: '{custom_module_location}/{module_name}/module-plan-{module_name}.md'
 ---
 
 # Step 1b: Continue Module Creation
@@ -70,7 +70,7 @@ Extract current status from frontmatter fields:
 - **Started:** {date}
 - **Last Step:** {lastStep}
 - **Steps Completed:** {stepsCompleted count}/{total steps}
-- **Location:** {bmb_creations_output_folder}/{module_name}
+- **Location:** {custom_module_location}/{module_name}
 
 \*\*Progress Summary:"
 

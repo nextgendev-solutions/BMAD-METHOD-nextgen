@@ -186,11 +186,12 @@ Multi-agent collaboration feature where all installed agents (19+ from BMM, CIS,
 ### Story Status Progression
 
 ```
-backlog → ready-for-dev → in-progress → review → done
+backlog → drafted → ready-for-dev → in-progress → review → done
 ```
 
-- **backlog** - Story exists in epic but not yet created
-- **ready-for-dev** - Story file created via create-story; validation is optional (run `validate-create-story` for quality check before dev picks it up)
+- **backlog** - Story exists in epic but not yet drafted
+- **drafted** - Story file created by SM via create-story
+- **ready-for-dev** - Story drafted and reviewed, ready for DEV
 - **in-progress** - DEV is implementing via dev-story
 - **review** - Implementation complete, awaiting code-review
 - **done** - Completed with DoD met

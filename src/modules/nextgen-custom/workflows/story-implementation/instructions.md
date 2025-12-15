@@ -590,7 +590,7 @@ echo "  - attachments/: ${ATTACHMENT_COUNT:-0} files ✓"
 **Note**: This is SINGLE SOURCE OF RESPONSIBILITY for cache creation - story-implementation workflow OWNS this
 </action>
 
-## <template-output section="story_started">
+<!-- template-output section="story_started" -->
 
 ## 📝 Starting Story: {story_key}
 
@@ -1576,7 +1576,7 @@ Inform {user_name} in {communication_language}: Story implementation complete - 
 
 <action>Set {current_phase} = "complete"</action>
 
-## <template-output section="story_complete">
+<!-- template-output section="story_complete" -->
 
 ## 🎉 Story COMPLETE: {story_key}
 

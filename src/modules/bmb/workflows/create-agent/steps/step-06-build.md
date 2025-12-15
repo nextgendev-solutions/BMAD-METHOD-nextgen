@@ -3,29 +3,29 @@ name: 'step-06-build'
 description: 'Generate complete YAML incorporating all discovered elements'
 
 # Path Definitions
-workflow_path: '{project-root}/bmb/workflows/create-agent/create-agent'
+workflow_path: '{project-root}/src/modules/bmb/workflows/create-agent'
 
 # File References
 thisStepFile: '{workflow_path}/steps/step-06-build.md'
 nextStepFile: '{workflow_path}/steps/step-07-validate.md'
 workflowFile: '{workflow_path}/workflow.md'
-agentPlan: '{bmb_creations_output_folder}/agent-plan-{agent_name}.md'
-agentBuildOutput: '{bmb_creations_output_folder}/{agent-name}'
+outputFile: '{output_folder}/agent-yaml-{project_name}.md'
+moduleOutputFile: '{project-root}/{bmad_folder}/{target_module}/agents/{agent_filename}.agent.yaml'
+standaloneOutputFile: '{workflow_path}/data/{agent_filename}/{agent_filename}.agent.yaml'
 
 # Template References
-simpleAgentTemplate: '{workflow_path}/templates/simple-agent.template.md'
-expertAgentTemplate: '{workflow_path}/templates/expert-agent.template.md'
+completeAgentTemplate: '{workflow_path}/templates/agent-complete-{agent_type}.md'
 
 # Task References
-advancedElicitationTask: '{project-root}/_bmad/core/tasks/advanced-elicitation.xml'
-partyModeWorkflow: '{project-root}/_bmad/core/workflows/party-mode/workflow.md'
+advancedElicitationTask: '{project-root}/{bmad_folder}/core/tasks/advanced-elicitation.xml'
+partyModeWorkflow: '{project-root}/{bmad_folder}/core/workflows/party-mode/workflow.md'
 ---
 
 # Step 6: Build Complete Agent YAML
 
 ## STEP GOAL:
 
-Generate the complete YAML agent folder, yaml file and sidecar content to the specification defined in {agentBuildOutput} completely.
+Generate the complete YAML agent file incorporating all discovered elements: purpose, persona, capabilities, name, and identity while maintaining the collaborative creation journey.
 
 ## MANDATORY EXECUTION RULES (READ FIRST):
 
@@ -46,10 +46,10 @@ Generate the complete YAML agent folder, yaml file and sidecar content to the sp
 
 ### Step-Specific Rules:
 
-- 🎯 Focus only on generating complete YAML and sidecar content structure based on discovered elements
-- 🚫 FORBIDDEN to duplicate auto-injected features (help and exit menu items, activation handler instructions)
+- 🎯 Focus only on generating complete YAML structure based on discovered elements
+- 🚫 FORBIDDEN to duplicate auto-injected features (help, exit, activation handlers)
 - 💬 Approach: Present the journey of collaborative creation while building technical structure
-- 📋 Generate YAML and sidecar files that accurately reflects all discoveries from previous steps
+- 📋 Generate YAML that accurately reflects all discoveries from previous steps
 
 ## EXECUTION PROTOCOLS:
 
@@ -85,15 +85,19 @@ Present this to the user:
 
 Based on determined agent type, load appropriate template:
 
-- If (agent will have memories and optionally its own knowledge, separate prompt files, or data in separate files)
-  - Utilize {expertAgentTemplate} to generate the agent output file {agentBuildOutput}/{agent-name}.agent.yaml
-  - Create the Side-cre folder to hold the optional sidecar files if needed from plan in following steps at {agentBuildOutput}/{agent-name}/{agent-name}-sidecar
-- ELSE:
-  - utilize {simpleAgentTemplate} to generate the agent output file {agentBuildOutput}/{agent-name}.agent.yaml
+- Simple Agent: `agent-complete-simple.md`
+- Expert Agent: `agent-complete-expert.md`
+- Module Agent: `agent-complete-module.md`
 
-### 4. Generate Complete YAML and sidecar content if applicable
+### 3. YAML Structure Generation
 
-Create the complete YAML incorporating all discovered elements from the plan:
+Explain the core structure to user:
+
+"I'll now generate the complete YAML that incorporates everything we've discovered. This will include your agent's metadata, persona, capabilities, and configuration."
+
+### 4. Generate Complete YAML
+
+Create the complete YAML incorporating all discovered elements:
 
 **Core Structure:**
 
@@ -136,7 +140,41 @@ Ensure proper implementation based on agent type:
 - Memory integration points
 - Personal workflow capabilities
 
-Ensure all files generated are complete, and nothing from the plan has not been skipped, and then give a creational summary of what was done to the user in chat.
+**Module Agent:**
+
+- Workflow orchestration capabilities
+- Team integration references
+- Cross-agent coordination
+
+### 6. Document Complete YAML
+
+#### Content to Append (if applicable):
+
+```markdown
+## Complete Agent YAML
+
+### Agent Type
+
+[Simple/Expert/Module as determined]
+
+### Generated Configuration
+
+[Complete YAML structure with all discovered elements]
+
+### Key Features Integrated
+
+- Purpose and role from discovery phase
+- Complete persona with four-field system
+- All capabilities and commands developed
+- Agent name and identity established
+- Type-specific optimizations applied
+
+### Output Configuration
+
+[Proper file paths and configuration based on agent type]
+```
+
+Save this content to `{outputFile}` for reference.
 
 ### 7. Present MENU OPTIONS
 
@@ -146,7 +184,7 @@ Display: "**Select an Option:** [A] Advanced Elicitation [P] Party Mode [C] Cont
 
 - IF A: Execute {advancedElicitationTask}
 - IF P: Execute {partyModeWorkflow}
-- IF C: Save content to {agentBuildOutput}, update frontmatter, then only then load, read entire file, then execute {nextStepFile}
+- IF C: Save content to {outputFile}, update frontmatter, then only then load, read entire file, then execute {nextStepFile}
 - IF Any other comments or queries: help user respond then [Redisplay Menu Options](#7-present-menu-options)
 
 #### EXECUTION RULES:

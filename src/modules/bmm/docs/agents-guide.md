@@ -180,12 +180,10 @@ The BMad Method Module (BMM) provides a comprehensive team of specialized AI age
 
 - `workflow-status` - Check what to do next
 - `sprint-planning` - Initialize `sprint-status.yaml` tracking
-- `create-story` - Create next story from epic (sets status to `ready-for-dev`)
-- `validate-create-story` - Optional quality check (does not change status; run before dev-story for extra validation)
+- `create-story` - Draft next story from epic
+- `validate-create-story` - Independent story validation
 - `epic-retrospective` - Post-epic review
 - `correct-course` - Handle changes during implementation
-
-**Story handoff sequence:** `create-story` → (optional) `validate-create-story` → `dev-story`
 
 **Communication Style:** Task-oriented and efficient. Direct and eliminates ambiguity. Focuses on clear handoffs and developer-ready specifications.
 
@@ -214,7 +212,7 @@ The BMad Method Module (BMM) provides a comprehensive team of specialized AI age
 **Workflows:**
 
 - `workflow-status` - Check what to do next
-- `dev-story` - Implement story with:
+- `develop-story` - Implement story with:
   - Task-by-task iteration
   - Test-driven development
   - Multi-run capability (initial + fixes)
@@ -451,7 +449,7 @@ The BMad Method Module (BMM) provides a comprehensive team of specialized AI age
 **Workflows:**
 
 - `workflow-status` - Check what to do next
-- `dev-story` - Execute Dev Story workflow, implementing tasks and tests
+- `develop-story` - Execute Dev Story workflow, implementing tasks and tests
 - `code-review` - Perform thorough clean context QA code review on a story
 
 **Communication Style:** Direct and energetic. Execution-focused. Breaks down complex game challenges into actionable steps. Celebrates performance wins.
@@ -646,7 +644,7 @@ Many workflows have optional validation workflows that perform independent revie
 | -------------------------- | ----------- | ------------------------------------------ |
 | `implementation-readiness` | Architect   | PRD + Architecture + Epics + UX (optional) |
 | `validate-design`          | UX Designer | UX specification and artifacts             |
-| `validate-create-story`    | SM          | Story file                                 |
+| `validate-create-story`    | SM          | Story draft                                |
 
 **When to use validation:**
 
@@ -663,14 +661,14 @@ You can customize any agent's personality without modifying core agent files.
 
 ### Location
 
-**Customization Directory:** `{project-root}/_bmad/_config/agents/`
+**Customization Directory:** `{project-root}/{bmad_folder}/_cfg/agents/`
 
 **Naming Convention:** `{module}-{agent-name}.customize.yaml`
 
 **Examples:**
 
 ```
-_bmad/_config/agents/
+{bmad_folder}/_cfg/agents/
 ├── bmm-pm.customize.yaml
 ├── bmm-dev.customize.yaml
 ├── cis-storyteller.customize.yaml
@@ -770,9 +768,9 @@ Other agents collaborate with PM's specialized perspective.
 
 ```bash
 # Create customization file at:
-# {project-root}/_bmad/_config/agents/{module}-{agent-name}.customize.yaml
+# {project-root}/{bmad_folder}/_cfg/agents/{module}-{agent-name}.customize.yaml
 
-# Example: _bmad/_config/agents/bmm-pm.customize.yaml
+# Example: {bmad_folder}/_cfg/agents/bmm-pm.customize.yaml
 ```
 
 **Step 2: Regenerate Agent Manifest**
@@ -902,7 +900,7 @@ Load the customized agent and verify the changes are reflected in its behavior a
 
 ```
 1. SM: *create-story
-2. DEV: *dev-story
+2. DEV: *develop-story
 3. DEV: *code-review
 4. Repeat steps 1-3 for next story
 ```
@@ -912,7 +910,7 @@ Load the customized agent and verify the changes are reflected in its behavior a
 ```
 1. TEA: *framework (once per project, early)
 2. TEA: *atdd (before implementing features)
-3. DEV: *dev-story (includes tests)
+3. DEV: *develop-story (includes tests)
 4. TEA: *automate (comprehensive test suite)
 5. TEA: *trace (quality gate)
 6. TEA: *ci (pipeline setup)
@@ -977,12 +975,12 @@ Quick reference for agent selection:
 | **UX Designer**         | 🎨   | 2 (Planning)            | create-ux-design, validate-design             | UX-heavy projects, design               |
 | **Architect**           | 🏗️   | 3 (Solutioning)         | architecture, implementation-readiness        | Technical design, architecture          |
 | **SM**                  | 🏃   | 4 (Implementation)      | sprint-planning, create-story                 | Story management, sprint coordination   |
-| **DEV**                 | 💻   | 4 (Implementation)      | dev-story, code-review                        | Implementation, coding                  |
+| **DEV**                 | 💻   | 4 (Implementation)      | develop-story, code-review                    | Implementation, coding                  |
 | **TEA**                 | 🧪   | All Phases              | framework, atdd, automate, trace, ci          | Testing, quality assurance              |
 | **Paige (Tech Writer)** | 📚   | All Phases              | document-project, diagrams, validation        | Documentation, diagrams                 |
 | **Principal Engineer**  | ⚡   | Quick Flow (All phases) | create-tech-spec, quick-dev, code-review      | Rapid development, technical leadership |
 | **Game Designer**       | 🎲   | 1-2 (Games)             | brainstorm-game, gdd, narrative               | Game design, creative vision            |
-| **Game Developer**      | 🕹️   | 4 (Games)               | dev-story, code-review                        | Game implementation                     |
+| **Game Developer**      | 🕹️   | 4 (Games)               | develop-story, code-review                    | Game implementation                     |
 | **Game Architect**      | 🏛️   | 3 (Games)               | architecture, implementation-readiness        | Game systems architecture               |
 | **BMad Master**         | 🧙   | Meta                    | party-mode, list tasks/workflows              | Orchestration, multi-agent              |
 
@@ -1072,7 +1070,7 @@ Quick reference for agent selection:
 
 - [ ] SM: `*sprint-planning` (once)
 - [ ] SM: `*create-story`
-- [ ] DEV: `*dev-story`
+- [ ] DEV: `*develop-story`
 - [ ] DEV: `*code-review`
 
 **Testing Strategy:**

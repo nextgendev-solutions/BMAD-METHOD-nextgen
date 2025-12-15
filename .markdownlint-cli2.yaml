@@ -5,8 +5,8 @@ ignores:
   - node_modules/**
   - test/fixtures/**
   - CODE_OF_CONDUCT.md
-  - _bmad/**
-  - _bmad*/**
+  - .bmad/**
+  - .bmad*/**
   - .agent/**
   - .claude/**
   - .roo/**

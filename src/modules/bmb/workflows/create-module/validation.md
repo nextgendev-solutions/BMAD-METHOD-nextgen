@@ -13,15 +13,15 @@ This document provides the validation criteria used in step-11-validate.md to en
 - [ ] data/ - Module data
 - [ ] \_module-installer/ - Installation config
 - [ ] README.md - Module documentation
-- [ ] module.yaml - module config file
 
-### Optional File in \_module-installer/
+### Required Files in \_module-installer/
 
+- [ ] install-config.yaml - Installation configuration
 - [ ] installer.js - Custom logic (if needed)
 
 ## Configuration Validation
 
-### module.yaml
+### install-config.yaml
 
 - [ ] Valid YAML syntax
 - [ ] Module code matches folder name

@@ -273,7 +273,7 @@ Set {{refinement_path[current_ticket]}} = "pre-refined-light"
 
 **Sally's Light Review Workflow**:
 
-#### For Stories with "Screen", "Interface", "View", "Modal", "Dialog", "Form", "Button", "Menu" in Title:
+#### UI Stories - Light Review:
 
 **LIGHT VALIDATION & GAP ANALYSIS** (5-10 min):
 
@@ -447,7 +447,7 @@ Set {{refinement_path[current_ticket]}} = "full"
 
 **Sally's Full Validation Workflow**:
 
-#### For Stories with "Screen", "Interface", "View", "Modal", "Dialog", "Form", "Button", "Menu" in Title:
+#### UI Stories - Full Validation:
 
 **DEEP ACTIVE REVIEW WITH FIXING** (20-25 min):
 

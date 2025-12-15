@@ -26,8 +26,8 @@ party_mode_exec: "{project-root}/_bmad/core/workflows/party-mode/workflow.md"
 advanced_elicitation: "{project-root}/_bmad/core/tasks/advanced-elicitation.xml"
 
 # Routing resources (lazy-loaded)
-project_levels: "{project-root}/_bmad/bmm/workflows/workflow-status/project-levels.yaml"
-workflow_init: "{project-root}/_bmad/bmm/workflows/workflow-status/init/workflow.yaml"
+project_levels: "{project-root}/{bmad_folder}/bmm/workflows/workflow-status/project-levels.yaml"
+workflow_init: "{project-root}/{bmad_folder}/bmm/workflows/workflow-status/init/workflow.yaml"
 
 standalone: true
 web_bundle: false
