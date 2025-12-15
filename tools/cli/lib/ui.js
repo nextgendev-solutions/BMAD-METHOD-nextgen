@@ -1,29 +1,10 @@
-/**
- * File: tools/cli/lib/ui.js
- *
- * BMAD Method - Business Model Agile Development Method
- * Repository: https://github.com/paulpreibisch/BMAD-METHOD
- *
- * Copyright (c) 2025 Paul Preibisch
- * Licensed under the Apache License, Version 2.0
- *
- * ---
- *
- * @fileoverview Interactive installation prompts and user input collection for BMAD CLI
- * @context Guides users through installation configuration including core settings, modules, IDEs, and optional AgentVibes TTS
- * @architecture Facade pattern - presents unified installation flow, delegates to Detector/ConfigCollector/IdeManager for specifics
- * @dependencies inquirer (prompts), chalk (formatting), detector.js (existing installation detection)
- * @entrypoints Called by install.js command via ui.promptInstall(), returns complete configuration object
- * @patterns Progressive disclosure (prompts in order), early IDE selection (Windows compat), AgentVibes auto-detection
- * @related installer.js (consumes config), AgentVibes#34 (TTS integration), promptAgentVibes()
- */
-
 const chalk = require('chalk');
 const inquirer = require('inquirer');
 const path = require('node:path');
 const os = require('node:os');
 const fs = require('fs-extra');
 const { CLIUtils } = require('./cli-utils');
+const { CustomHandler } = require('../installers/lib/custom/handler');
 
 /**
  * UI utilities for the installer
@@ -37,8 +18,6 @@ class UI {
    */
   async promptInstall() {
     CLIUtils.displayLogo();
-    const version = CLIUtils.getVersion();
-    CLIUtils.displaySection('BMAD™ Setup', `Build More, Architect Dreams v${version}`);
 
     const confirmedDirectory = await this.getConfirmedDirectory();
 
@@ -52,34 +31,183 @@ class UI {
       await installer.handleLegacyV4Migration(confirmedDirectory, legacyV4);
     }
 
-    // Prompt for custom content location (separate from installation directory)
-    const customContentConfig = await this.promptCustomContentLocation();
+    // Check for legacy folders and prompt for rename before showing any menus
+    let hasLegacyCfg = false;
+    let hasLegacyBmadFolder = false;
+    let bmadDir = null;
+    let legacyBmadPath = null;
 
-    // Check if there's an existing BMAD installation
-    const fs = require('fs-extra');
-    const path = require('node:path');
-    // Use findBmadDir to detect any custom folder names (V6+)
-    const bmadDir = await installer.findBmadDir(confirmedDirectory);
+    // First check for legacy .bmad folder (instead of _bmad)
+    // Only check if directory exists
+    if (await fs.pathExists(confirmedDirectory)) {
+      const entries = await fs.readdir(confirmedDirectory, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory() && entry.name === '.bmad') {
+          hasLegacyBmadFolder = true;
+          legacyBmadPath = path.join(confirmedDirectory, '.bmad');
+          bmadDir = legacyBmadPath;
+
+          // Check if it has _cfg folder
+          const cfgPath = path.join(legacyBmadPath, '_cfg');
+          if (await fs.pathExists(cfgPath)) {
+            hasLegacyCfg = true;
+          }
+          break;
+        }
+      }
+    }
+
+    // If no .bmad found, check for current installations
+    if (!hasLegacyBmadFolder) {
+      const bmadResult = await installer.findBmadDir(confirmedDirectory);
+      bmadDir = bmadResult.bmadDir;
+      hasLegacyCfg = bmadResult.hasLegacyCfg;
+    }
+
+    if (hasLegacyBmadFolder || hasLegacyCfg) {
+      console.log(chalk.yellow('\n⚠️  Legacy folder structure detected'));
+
+      let message = 'The following folders need to be renamed:\n';
+      if (hasLegacyBmadFolder) {
+        message += chalk.dim(`  • ".bmad" → "_bmad"\n`);
+      }
+      if (hasLegacyCfg) {
+        message += chalk.dim(`  • "_cfg" → "_config"\n`);
+      }
+      console.log(message);
+
+      const { shouldRename } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'shouldRename',
+          message: 'Would you like the installer to rename these folders for you?',
+          default: true,
+        },
+      ]);
+
+      if (!shouldRename) {
+        console.log(chalk.red('\n❌ Installation cancelled'));
+        console.log(chalk.dim('You must manually rename the folders before proceeding:'));
+        if (hasLegacyBmadFolder) {
+          console.log(chalk.dim(`  • Rename ".bmad" to "_bmad"`));
+        }
+        if (hasLegacyCfg) {
+          console.log(chalk.dim(`  • Rename "_cfg" to "_config"`));
+        }
+        process.exit(0);
+        return;
+      }
+
+      // Perform the renames
+      const ora = require('ora');
+      const spinner = ora('Updating folder structure...').start();
+
+      try {
+        // First rename .bmad to _bmad if needed
+        if (hasLegacyBmadFolder) {
+          const newBmadPath = path.join(confirmedDirectory, '_bmad');
+          await fs.move(legacyBmadPath, newBmadPath);
+          bmadDir = newBmadPath;
+          spinner.succeed('Renamed ".bmad" to "_bmad"');
+        }
+
+        // Then rename _cfg to _config if needed
+        if (hasLegacyCfg) {
+          spinner.start('Renaming configuration folder...');
+          const oldCfgPath = path.join(bmadDir, '_cfg');
+          const newCfgPath = path.join(bmadDir, '_config');
+          await fs.move(oldCfgPath, newCfgPath);
+          spinner.succeed('Renamed "_cfg" to "_config"');
+        }
+
+        spinner.succeed('Folder structure updated successfully');
+      } catch (error) {
+        spinner.fail('Failed to update folder structure');
+        console.error(chalk.red(`Error: ${error.message}`));
+        process.exit(1);
+      }
+    }
+
+    // Check if there's an existing BMAD installation (after any folder renames)
     const hasExistingInstall = await fs.pathExists(bmadDir);
+
+    // Collect IDE tool selection early - we need this to know if we should ask about TTS
+    let toolSelection;
+    let agentVibesConfig = { enabled: false, alreadyInstalled: false };
+    let claudeCodeSelected = false;
+
+    if (!hasExistingInstall) {
+      // For new installations, collect IDE selection first
+      // We don't have modules yet, so pass empty array
+      toolSelection = await this.promptToolSelection(confirmedDirectory, []);
+
+      // Check if Claude Code was selected
+      claudeCodeSelected = toolSelection.ides && toolSelection.ides.includes('claude-code');
+
+      // If Claude Code was selected, ask about TTS
+      if (claudeCodeSelected) {
+        const { enableTts } = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'enableTts',
+            message: 'Claude Code supports TTS (Text-to-Speech). Would you like to enable it?',
+            default: false,
+          },
+        ]);
+
+        if (enableTts) {
+          agentVibesConfig = { enabled: true, alreadyInstalled: false };
+        }
+      }
+    }
+
+    // Always ask for custom content, but we'll handle it differently for new installs
+    let customContentConfig = { hasCustomContent: false };
+    if (hasExistingInstall) {
+      // Existing installation - prompt to add/update custom content
+      customContentConfig = await this.promptCustomContentForExisting();
+    } else {
+      // New installation - we'll prompt after creating the directory structure
+      // For now, set a flag to indicate we should ask later
+      customContentConfig._shouldAsk = true;
+    }
 
     // Track action type (only set if there's an existing installation)
     let actionType;
 
     // Only show action menu if there's an existing installation
     if (hasExistingInstall) {
+      // Get version information
+      const { existingInstall } = await this.getExistingInstallation(confirmedDirectory);
+      const packageJsonPath = path.join(__dirname, '../../../package.json');
+      const currentVersion = require(packageJsonPath).version;
+      const installedVersion = existingInstall.version || 'unknown';
+
+      // Build menu choices dynamically
+      const choices = [];
+
+      // Always show Quick Update first (allows refreshing installation even on same version)
+      if (installedVersion !== 'unknown') {
+        choices.push({
+          name: `Quick Update (v${installedVersion} → v${currentVersion})`,
+          value: 'quick-update',
+        });
+      }
+
+      // Common actions
+      choices.push(
+        { name: 'Modify BMAD Installation', value: 'update' },
+        { name: 'Add / Update Custom Content', value: 'add-custom' },
+        { name: 'Rebuild Agents', value: 'compile' },
+      );
+
       const promptResult = await inquirer.prompt([
         {
           type: 'list',
           name: 'actionType',
           message: 'What would you like to do?',
-          choices: [
-            { name: 'Quick Update (Settings Preserved)', value: 'quick-update' },
-            { name: 'Modify BMAD Installation (Confirm or change each setting)', value: 'update' },
-            { name: 'Remove BMad Folder and Reinstall (Full clean install - BMad Customization Will Be Lost)', value: 'reinstall' },
-            { name: 'Compile Agents (Quick rebuild of all agent .md files)', value: 'compile' },
-            { name: 'Cancel', value: 'cancel' },
-          ],
-          default: 'quick-update',
+          choices: choices,
+          default: choices[0].value, // Use the first option as default
         },
       ]);
 
@@ -88,11 +216,60 @@ class UI {
 
       // Handle quick update separately
       if (actionType === 'quick-update') {
-        // Even for quick update, ask about custom content
-        const customContentConfig = await this.promptCustomContentLocation();
+        // Quick update doesn't install custom content - just updates existing modules
         return {
           actionType: 'quick-update',
           directory: confirmedDirectory,
+          customContent: { hasCustomContent: false },
+        };
+      }
+
+      // Handle add custom content separately
+      if (actionType === 'add-custom') {
+        customContentConfig = await this.promptCustomContentSource();
+        // After adding custom content, continue to select additional modules
+        const { installedModuleIds } = await this.getExistingInstallation(confirmedDirectory);
+
+        // Ask if user wants to add additional modules
+        const { wantsMoreModules } = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'wantsMoreModules',
+            message: 'Do you want to add any additional modules?',
+            default: false,
+          },
+        ]);
+
+        let selectedModules = [];
+        if (wantsMoreModules) {
+          const moduleChoices = await this.getModuleChoices(installedModuleIds, customContentConfig);
+          selectedModules = await this.selectModules(moduleChoices);
+
+          // Process custom content selection
+          const selectedCustomContent = selectedModules.filter((mod) => mod.startsWith('__CUSTOM_CONTENT__'));
+
+          if (selectedCustomContent.length > 0) {
+            customContentConfig.selected = true;
+            customContentConfig.selectedFiles = selectedCustomContent.map((mod) => mod.replace('__CUSTOM_CONTENT__', ''));
+
+            // Convert to module IDs
+            const customContentModuleIds = [];
+            const customHandler = new CustomHandler();
+            for (const customFile of customContentConfig.selectedFiles) {
+              const customInfo = await customHandler.getCustomInfo(customFile);
+              if (customInfo) {
+                customContentModuleIds.push(customInfo.id);
+              }
+            }
+            selectedModules = [...selectedModules.filter((mod) => !mod.startsWith('__CUSTOM_CONTENT__')), ...customContentModuleIds];
+          }
+        }
+
+        return {
+          actionType: 'update',
+          directory: confirmedDirectory,
+          installCore: false, // Don't reinstall core
+          modules: selectedModules,
           customContent: customContentConfig,
         };
       }
@@ -105,68 +282,133 @@ class UI {
         };
       }
 
-      // Handle cancel
-      if (actionType === 'cancel') {
+      // If actionType === 'update', handle it with the new flow
+      // Return early with modify configuration
+      if (actionType === 'update') {
+        // Get existing installation info
+        const { installedModuleIds } = await this.getExistingInstallation(confirmedDirectory);
+
+        console.log(chalk.dim(`  Found existing modules: ${[...installedModuleIds].join(', ')}`));
+        const { changeModuleSelection } = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'changeModuleSelection',
+            message: 'Change which modules are installed?',
+            default: false,
+          },
+        ]);
+
+        let selectedModules = [];
+        if (changeModuleSelection) {
+          // Show module selection with existing modules pre-selected
+          const moduleChoices = await this.getModuleChoices(new Set(installedModuleIds), { hasCustomContent: false });
+          selectedModules = await this.selectModules(moduleChoices, [...installedModuleIds]);
+        } else {
+          selectedModules = [...installedModuleIds];
+        }
+
+        // Get tool selection
+        const toolSelection = await this.promptToolSelection(confirmedDirectory, selectedModules);
+
+        // TTS configuration - ask right after tool selection (matches new install flow)
+        const hasClaudeCode = toolSelection.ides && toolSelection.ides.includes('claude-code');
+        let enableTts = false;
+
+        if (hasClaudeCode) {
+          const { enableTts: enable } = await inquirer.prompt([
+            {
+              type: 'confirm',
+              name: 'enableTts',
+              message: 'Claude Code supports TTS (Text-to-Speech). Would you like to enable it?',
+              default: false,
+            },
+          ]);
+          enableTts = enable;
+        }
+
+        // Core config with existing defaults (ask after TTS)
+        const coreConfig = await this.collectCoreConfig(confirmedDirectory);
+
         return {
-          actionType: 'cancel',
+          actionType: 'update',
           directory: confirmedDirectory,
+          installCore: true,
+          modules: selectedModules,
+          ides: toolSelection.ides,
+          skipIde: toolSelection.skipIde,
+          coreConfig: coreConfig,
+          customContent: { hasCustomContent: false },
+          enableAgentVibes: enableTts,
+          agentVibesInstalled: false,
         };
       }
-
-      // Handle reinstall - DON'T return early, let it flow through configuration collection
-      // The installer will handle deletion when it sees actionType === 'reinstall'
-      // For now, just note that we're in reinstall mode and continue below
-
-      // If actionType === 'update' or 'reinstall', continue with normal flow below
     }
 
+    // This section is only for new installations (update returns early above)
     const { installedModuleIds } = await this.getExistingInstallation(confirmedDirectory);
+
+    // Ask about official modules for new installations
+    const { wantsOfficialModules } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'wantsOfficialModules',
+        message: 'Will you be installing any official modules (BMad Method, BMad Builder, Creative Innovation Suite)?',
+        default: true,
+      },
+    ]);
+
+    let selectedOfficialModules = [];
+    if (wantsOfficialModules) {
+      const moduleChoices = await this.getModuleChoices(installedModuleIds, { hasCustomContent: false });
+      selectedOfficialModules = await this.selectModules(moduleChoices);
+    }
+
+    // Ask about custom content
+    const { wantsCustomContent } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'wantsCustomContent',
+        message: 'Will you be installing any locally stored custom content?',
+        default: false,
+      },
+    ]);
+
+    if (wantsCustomContent) {
+      customContentConfig = await this.promptCustomContentSource();
+    }
+
+    // Store the selected modules for later
+    customContentConfig._selectedOfficialModules = selectedOfficialModules;
+
+    // Build the final list of selected modules
+    let selectedModules = customContentConfig._selectedOfficialModules || [];
+
+    // Add custom content modules if any were selected
+    if (customContentConfig && customContentConfig.selectedModuleIds) {
+      selectedModules = [...selectedModules, ...customContentConfig.selectedModuleIds];
+    }
+
+    // Remove core if it's in the list (it's always installed)
+    selectedModules = selectedModules.filter((m) => m !== 'core');
+
+    // Tool selection (already done for new installs at the beginning)
+    if (!toolSelection) {
+      toolSelection = await this.promptToolSelection(confirmedDirectory, selectedModules);
+    }
+
+    // Collect configurations for new installations
     const coreConfig = await this.collectCoreConfig(confirmedDirectory);
 
-    // Skip module selection during update/reinstall - keep existing modules
-    let selectedModules;
-    if (actionType === 'update' || actionType === 'reinstall') {
-      // Keep all existing installed modules during update/reinstall
-      selectedModules = [...installedModuleIds];
-      console.log(chalk.cyan('\n📦 Keeping existing modules: ') + selectedModules.join(', '));
-    } else {
-      // Only show module selection for new installs
-      const moduleChoices = await this.getModuleChoices(installedModuleIds, customContentConfig);
-      selectedModules = await this.selectModules(moduleChoices);
-
-      // Check which custom content items were selected
-      const selectedCustomContent = selectedModules.filter((mod) => mod.startsWith('__CUSTOM_CONTENT__'));
-      if (selectedCustomContent.length > 0) {
-        customContentConfig.selected = true;
-        customContentConfig.selectedFiles = selectedCustomContent.map((mod) => mod.replace('__CUSTOM_CONTENT__', ''));
-        // Filter out custom content markers since they're not real modules
-        selectedModules = selectedModules.filter((mod) => !mod.startsWith('__CUSTOM_CONTENT__'));
-      } else if (customContentConfig.hasCustomContent) {
-        // User provided custom content but didn't select any
-        customContentConfig.selected = false;
-        customContentConfig.selectedFiles = [];
-      }
-    }
-
-    // Prompt for AgentVibes TTS integration
-    const agentVibesConfig = await this.promptAgentVibes(confirmedDirectory);
-
-    // Collect IDE tool selection AFTER configuration prompts (fixes Windows/PowerShell hang)
-    // This allows text-based prompts to complete before the checkbox prompt
-    const toolSelection = await this.promptToolSelection(confirmedDirectory, selectedModules);
-
-    // No more screen clearing - keep output flowing
+    // TTS already handled at the beginning for new installs
 
     return {
-      actionType: actionType || 'update', // Preserve reinstall or update action
+      actionType: 'install',
       directory: confirmedDirectory,
-      installCore: true, // Always install core
+      installCore: true,
       modules: selectedModules,
-      // IDE selection collected after config, will be configured later
       ides: toolSelection.ides,
       skipIde: toolSelection.skipIde,
-      coreConfig: coreConfig, // Pass collected core config to installer
-      // Custom content configuration
+      coreConfig: coreConfig,
       customContent: customContentConfig,
       enableAgentVibes: agentVibesConfig.enabled,
       agentVibesInstalled: agentVibesConfig.alreadyInstalled,
@@ -185,7 +427,8 @@ class UI {
     const { Installer } = require('../installers/lib/core/installer');
     const detector = new Detector();
     const installer = new Installer();
-    const bmadDir = await installer.findBmadDir(projectDir || process.cwd());
+    const bmadResult = await installer.findBmadDir(projectDir || process.cwd());
+    const bmadDir = bmadResult.bmadDir;
     const existingInstall = await detector.detect(bmadDir);
     const configuredIdes = existingInstall.ides || [];
 
@@ -255,8 +498,6 @@ class UI {
       }
     }
 
-    CLIUtils.displaySection('Tool Integration', 'Select AI coding assistants and IDEs to configure');
-
     let answers;
     let userConfirmedNoTools = false;
 
@@ -268,7 +509,7 @@ class UI {
           name: 'ides',
           message: 'Select tools to configure:',
           choices: ideChoices,
-          pageSize: 15,
+          pageSize: 30,
         },
       ]);
 
@@ -294,9 +535,8 @@ class UI {
       ]);
 
       if (goBack) {
-        // Re-display the section header before looping back
+        // Re-display a message before looping back
         console.log();
-        CLIUtils.displaySection('Tool Integration', 'Select AI coding assistants and IDEs to configure');
       } else {
         // User explicitly chose to proceed without tools
         userConfirmedNoTools = true;
@@ -386,69 +626,26 @@ class UI {
    * @param {Object} result - Installation result
    */
   showInstallSummary(result) {
-    CLIUtils.displaySection('Installation Complete', 'BMAD™ has been successfully installed');
-
-    const summary = [
-      `📁 Installation Path: ${result.path}`,
-      `📦 Modules Installed: ${result.modules?.length > 0 ? result.modules.join(', ') : 'core only'}`,
-      `🔧 Tools Configured: ${result.ides?.length > 0 ? result.ides.join(', ') : 'none'}`,
-    ];
-
-    // Add AgentVibes TTS info if enabled
-    if (result.agentVibesEnabled) {
-      summary.push(`🎤 AgentVibes TTS: Enabled`);
-    }
-
-    CLIUtils.displayBox(summary.join('\n\n'), {
-      borderColor: 'green',
-      borderStyle: 'round',
-    });
-
-    // Display TTS injection details if present
-    if (result.ttsInjectedFiles && result.ttsInjectedFiles.length > 0) {
-      console.log('\n' + chalk.cyan.bold('═══════════════════════════════════════════════════'));
-      console.log(chalk.cyan.bold('            AgentVibes TTS Injection Summary'));
-      console.log(chalk.cyan.bold('═══════════════════════════════════════════════════\n'));
-
-      // Explain what TTS injection is
-      console.log(chalk.white.bold('What is TTS Injection?\n'));
-      console.log(chalk.dim('  TTS (Text-to-Speech) injection adds voice instructions to BMAD agents,'));
-      console.log(chalk.dim('  enabling them to speak their responses aloud using AgentVibes.\n'));
-      console.log(chalk.dim('  Example: When you activate the PM agent, it will greet you with'));
-      console.log(chalk.dim('  spoken audio like "Hey! I\'m your Project Manager. How can I help?"\n'));
-
-      console.log(chalk.green(`✅ TTS injection applied to ${result.ttsInjectedFiles.length} file(s):\n`));
-
-      // Group by type
-      const partyModeFiles = result.ttsInjectedFiles.filter((f) => f.type === 'party-mode');
-      const agentTTSFiles = result.ttsInjectedFiles.filter((f) => f.type === 'agent-tts');
-
-      if (partyModeFiles.length > 0) {
-        console.log(chalk.yellow('  Party Mode (multi-agent conversations):'));
-        for (const file of partyModeFiles) {
-          console.log(chalk.dim(`    • ${file.path}`));
-        }
-      }
-
-      if (agentTTSFiles.length > 0) {
-        console.log(chalk.yellow('  Agent TTS (individual agent voices):'));
-        for (const file of agentTTSFiles) {
-          console.log(chalk.dim(`    • ${file.path}`));
-        }
-      }
-
-      // Show backup info and restore command
-      console.log('\n' + chalk.white.bold('Backups & Recovery:\n'));
-      console.log(chalk.dim('  Pre-injection backups are stored in:'));
-      console.log(chalk.cyan('    ~/.bmad-tts-backups/\n'));
-      console.log(chalk.dim('  To restore original files (removes TTS instructions):'));
-      console.log(chalk.cyan(`    bmad-tts-injector.sh --restore ${result.path}\n`));
-
-      console.log(chalk.cyan('💡 BMAD agents will now speak when activated!'));
-      console.log(chalk.dim('   Ensure AgentVibes is installed: https://agentvibes.org'));
-    }
-
+    // Clean, simple completion message
     console.log('\n' + chalk.green.bold('✨ BMAD is ready to use!'));
+
+    // Show installation summary in a simple format
+    console.log(chalk.dim(`Installed to: ${result.path}`));
+    if (result.modules && result.modules.length > 0) {
+      console.log(chalk.dim(`Modules: ${result.modules.join(', ')}`));
+    }
+    if (result.agentVibesEnabled) {
+      console.log(chalk.dim(`TTS: Enabled`));
+    }
+
+    // TTS injection info (simplified)
+    if (result.ttsInjectedFiles && result.ttsInjectedFiles.length > 0) {
+      console.log(chalk.dim(`\n💡 TTS enabled for ${result.ttsInjectedFiles.length} agent(s)`));
+      console.log(chalk.dim('   Agents will now speak when using AgentVibes'));
+    }
+
+    console.log(chalk.yellow('\nThank you for helping test the early release version of the new BMad Core and BMad Method!'));
+    console.log(chalk.cyan('Stable Beta coming soon - please read the full README.md and linked documentation to get started!'));
   }
 
   /**
@@ -478,8 +675,8 @@ class UI {
     const { Installer } = require('../installers/lib/core/installer');
     const detector = new Detector();
     const installer = new Installer();
-    const bmadDir = await installer.findBmadDir(directory);
-    const existingInstall = await detector.detect(bmadDir);
+    const bmadDirResult = await installer.findBmadDir(directory);
+    const existingInstall = await detector.detect(bmadDirResult.bmadDir);
     const installedModuleIds = new Set(existingInstall.modules.map((mod) => mod.id));
 
     return { existingInstall, installedModuleIds };
@@ -498,7 +695,9 @@ class UI {
     // Now collect with existing values as defaults (false = don't skip loading, true = skip completion message)
     await configCollector.collectModuleConfig('core', directory, false, true);
 
-    return configCollector.collectedConfig.core;
+    const coreConfig = configCollector.collectedConfig.core;
+    // Ensure we always have a core config object, even if empty
+    return coreConfig || {};
   }
 
   /**
@@ -511,42 +710,78 @@ class UI {
     const moduleChoices = [];
     const isNewInstallation = installedModuleIds.size === 0;
 
-    // Add custom content items first if found
-    if (customContentConfig && customContentConfig.hasCustomContent && customContentConfig.customPath) {
-      // Add separator before custom content
-      moduleChoices.push(new inquirer.Separator('── Custom Content ──'));
+    const customContentItems = [];
+    const hasCustomContentItems = false;
 
-      // Get the custom content info to display proper names
-      const { CustomHandler } = require('../installers/lib/custom/handler');
+    // Add custom content items
+    if (customContentConfig && customContentConfig.hasCustomContent && customContentConfig.customPath) {
+      // Existing installation - show from directory
       const customHandler = new CustomHandler();
       const customFiles = await customHandler.findCustomContent(customContentConfig.customPath);
 
       for (const customFile of customFiles) {
         const customInfo = await customHandler.getCustomInfo(customFile);
         if (customInfo) {
-          moduleChoices.push({
+          customContentItems.push({
             name: `${chalk.cyan('✓')} ${customInfo.name} ${chalk.gray(`(${customInfo.relativePath})`)}`,
             value: `__CUSTOM_CONTENT__${customFile}`, // Unique value for each custom content
             checked: true, // Default to selected since user chose to provide custom content
+            path: customInfo.path, // Track path to avoid duplicates
           });
         }
       }
-
-      // Add separator for official content
-      moduleChoices.push(new inquirer.Separator('── Official Content ──'));
     }
 
     // Add official modules
     const { ModuleManager } = require('../installers/lib/modules/manager');
-    const moduleManager = new ModuleManager();
-    const availableModules = await moduleManager.listAvailable();
+    // For new installations, don't scan project yet (will do after custom content is discovered)
+    // For existing installations, scan if user selected custom content
+    const shouldScanProject =
+      !isNewInstallation && customContentConfig && customContentConfig.hasCustomContent && customContentConfig.selected;
+    const moduleManager = new ModuleManager({
+      scanProjectForModules: shouldScanProject,
+    });
+    const { modules: availableModules, customModules: customModulesFromProject } = await moduleManager.listAvailable();
 
+    // First, add all items to appropriate sections
+    const allCustomModules = [];
+
+    // Add custom content items from directory
+    allCustomModules.push(...customContentItems);
+
+    // Add custom modules from project scan (if scanning is enabled)
+    for (const mod of customModulesFromProject) {
+      // Skip if this module is already in customContentItems (by path)
+      const isDuplicate = allCustomModules.some((item) => item.path && mod.path && path.resolve(item.path) === path.resolve(mod.path));
+
+      if (!isDuplicate) {
+        allCustomModules.push({
+          name: `${chalk.cyan('✓')} ${mod.name} ${chalk.gray(`(${mod.source})`)}`,
+          value: mod.id,
+          checked: isNewInstallation ? mod.defaultSelected || false : installedModuleIds.has(mod.id),
+        });
+      }
+    }
+
+    // Add separators and modules in correct order
+    if (allCustomModules.length > 0) {
+      // Add separator for custom content, all custom modules, and official content separator
+      moduleChoices.push(
+        new inquirer.Separator('── Custom Content ──'),
+        ...allCustomModules,
+        new inquirer.Separator('── Official Content ──'),
+      );
+    }
+
+    // Add official modules (only non-custom ones)
     for (const mod of availableModules) {
-      moduleChoices.push({
-        name: mod.name,
-        value: mod.id,
-        checked: isNewInstallation ? mod.defaultSelected || false : installedModuleIds.has(mod.id),
-      });
+      if (!mod.isCustom) {
+        moduleChoices.push({
+          name: mod.name,
+          value: mod.id,
+          checked: isNewInstallation ? mod.defaultSelected || false : installedModuleIds.has(mod.id),
+        });
+      }
     }
 
     return moduleChoices;
@@ -557,15 +792,14 @@ class UI {
    * @param {Array} moduleChoices - Available module choices
    * @returns {Array} Selected module IDs
    */
-  async selectModules(moduleChoices) {
-    CLIUtils.displaySection('Module Selection', 'Choose the BMAD modules to install');
-
+  async selectModules(moduleChoices, defaultSelections = []) {
     const moduleAnswer = await inquirer.prompt([
       {
         type: 'checkbox',
         name: 'modules',
         message: 'Select modules to install:',
         choices: moduleChoices,
+        default: defaultSelections,
       },
     ]);
 
@@ -609,125 +843,21 @@ class UI {
       if (stats.isDirectory()) {
         const files = await fs.readdir(directory);
         if (files.length > 0) {
-          // Check for any bmad installation (any folder with _cfg/manifest.yaml)
+          // Check for any bmad installation (any folder with _config/manifest.yaml)
           const { Installer } = require('../installers/lib/core/installer');
           const installer = new Installer();
-          const bmadDir = await installer.findBmadDir(directory);
-          const hasBmadInstall = (await fs.pathExists(bmadDir)) && (await fs.pathExists(path.join(bmadDir, '_cfg', 'manifest.yaml')));
+          const bmadResult = await installer.findBmadDir(directory);
+          const hasBmadInstall =
+            (await fs.pathExists(bmadResult.bmadDir)) && (await fs.pathExists(path.join(bmadResult.bmadDir, '_config', 'manifest.yaml')));
 
           console.log(
             chalk.gray(`Directory exists and contains ${files.length} item(s)`) +
-              (hasBmadInstall ? chalk.yellow(` including existing BMAD installation (${path.basename(bmadDir)})`) : ''),
+              (hasBmadInstall ? chalk.yellow(` including existing BMAD installation (${path.basename(bmadResult.bmadDir)})`) : ''),
           );
         } else {
           console.log(chalk.gray('Directory exists and is empty'));
         }
       }
-    }
-  }
-
-  /**
-   * Prompt for custom content location
-   * @returns {Object} Custom content configuration
-   */
-  async promptCustomContentLocation() {
-    try {
-      CLIUtils.displaySection('Custom Content', 'Optional: Add custom agents and workflows');
-
-      const { hasCustomContent } = await inquirer.prompt([
-        {
-          type: 'list',
-          name: 'hasCustomContent',
-          message: 'Do you have custom content to install?',
-          choices: [
-            { name: 'No (skip custom content)', value: 'none' },
-            { name: 'Enter a directory path', value: 'directory' },
-            { name: 'Enter a URL', value: 'url' },
-          ],
-          default: 'none',
-        },
-      ]);
-
-      if (hasCustomContent === 'none') {
-        return { hasCustomContent: false };
-      }
-
-      if (hasCustomContent === 'url') {
-        console.log(chalk.yellow('\nURL-based custom content installation is coming soon!'));
-        console.log(chalk.cyan('For now, please download your custom content and choose "Enter a directory path".\n'));
-        return { hasCustomContent: false };
-      }
-
-      if (hasCustomContent === 'directory') {
-        let customPath;
-        while (!customPath) {
-          let expandedPath;
-          const { directory } = await inquirer.prompt([
-            {
-              type: 'input',
-              name: 'directory',
-              message: 'Enter the path to your custom content directory:',
-              default: process.cwd(), // Use actual current working directory
-              validate: async (input) => {
-                if (!input || input.trim() === '') {
-                  return 'Please enter a directory path';
-                }
-
-                try {
-                  expandedPath = this.expandUserPath(input.trim());
-                } catch (error) {
-                  return error.message;
-                }
-
-                // Check if the path exists
-                const pathExists = await fs.pathExists(expandedPath);
-                if (!pathExists) {
-                  return 'Directory does not exist';
-                }
-
-                return true;
-              },
-            },
-          ]);
-
-          // Now expand the path for use after the prompt
-          expandedPath = this.expandUserPath(directory.trim());
-
-          // Check if directory has custom content
-          const { CustomHandler } = require('../installers/lib/custom/handler');
-          const customHandler = new CustomHandler();
-          const customFiles = await customHandler.findCustomContent(expandedPath);
-
-          if (customFiles.length === 0) {
-            console.log(chalk.yellow(`\nNo custom.yaml files found in ${expandedPath}`));
-
-            const { tryAgain } = await inquirer.prompt([
-              {
-                type: 'confirm',
-                name: 'tryAgain',
-                message: 'Try a different directory?',
-                default: true,
-              },
-            ]);
-
-            if (tryAgain) {
-              continue;
-            } else {
-              return { hasCustomContent: false };
-            }
-          }
-
-          customPath = expandedPath;
-          console.log(chalk.green(`\n✓ Found ${customFiles.length} custom content file(s)`));
-        }
-
-        return { hasCustomContent: true, customPath };
-      }
-
-      return { hasCustomContent: false };
-    } catch (error) {
-      console.error(chalk.red('Error in custom content prompt:'), error);
-      return { hasCustomContent: false };
     }
   }
 
@@ -895,7 +1025,7 @@ class UI {
    * @calls checkAgentVibesInstalled(), inquirer.prompt(), chalk.green/yellow/dim()
    *
    * AI NOTE: This prompt is strategically positioned in installation flow:
-   * - AFTER core config (bmad_folder, user_name, etc)
+   * - AFTER core config (user_name, etc)
    * - BEFORE IDE selection (which can hang on Windows/PowerShell)
    *
    * Flow Logic:
@@ -1015,6 +1145,332 @@ class UI {
     const playTtsPath = path.join(projectDir, '.claude', 'hooks', 'play-tts.sh');
 
     return (await fs.pathExists(hookPath)) && (await fs.pathExists(playTtsPath));
+  }
+
+  /**
+   * Load existing configurations to use as defaults
+   * @param {string} directory - Installation directory
+   * @returns {Object} Existing configurations
+   */
+  async loadExistingConfigurations(directory) {
+    const configs = {
+      hasCustomContent: false,
+      coreConfig: {},
+      ideConfig: { ides: [], skipIde: false },
+      agentVibesConfig: { enabled: false, alreadyInstalled: false },
+    };
+
+    try {
+      // Load core config
+      configs.coreConfig = await this.collectCoreConfig(directory);
+
+      // Load IDE configuration
+      const configuredIdes = await this.getConfiguredIdes(directory);
+      if (configuredIdes.length > 0) {
+        configs.ideConfig.ides = configuredIdes;
+        configs.ideConfig.skipIde = false;
+      }
+
+      // Load AgentVibes configuration
+      const agentVibesInstalled = await this.checkAgentVibesInstalled(directory);
+      configs.agentVibesConfig = { enabled: agentVibesInstalled, alreadyInstalled: agentVibesInstalled };
+
+      return configs;
+    } catch {
+      // If loading fails, return empty configs
+      console.warn('Warning: Could not load existing configurations');
+      return configs;
+    }
+  }
+
+  /**
+   * Get configured IDEs from existing installation
+   * @param {string} directory - Installation directory
+   * @returns {Array} List of configured IDEs
+   */
+  async getConfiguredIdes(directory) {
+    const { Detector } = require('../installers/lib/core/detector');
+    const { Installer } = require('../installers/lib/core/installer');
+    const detector = new Detector();
+    const installer = new Installer();
+    const bmadResult = await installer.findBmadDir(directory);
+    const existingInstall = await detector.detect(bmadResult.bmadDir);
+    return existingInstall.ides || [];
+  }
+
+  /**
+   * Prompt for custom content for existing installations
+   * @returns {Object} Custom content configuration
+   */
+  async promptCustomContentForExisting() {
+    try {
+      // Skip custom content installation - always return false
+      return { hasCustomContent: false };
+
+      // TODO: Custom content installation temporarily disabled
+      // CLIUtils.displaySection('Custom Content', 'Add new custom agents, workflows, or modules to your installation');
+
+      // const { hasCustomContent } = await inquirer.prompt([
+      //   {
+      //     type: 'list',
+      //     name: 'hasCustomContent',
+      //     message: 'Do you want to add or update custom content?',
+      //     choices: [
+      //       {
+      //         name: 'No, continue with current installation only',
+      //         value: false,
+      //       },
+      //       {
+      //         name: 'Yes, I have custom content to add or update',
+      //         value: true,
+      //       },
+      //     ],
+      //     default: false,
+      //   },
+      // ]);
+
+      // if (!hasCustomContent) {
+      //   return { hasCustomContent: false };
+      // }
+
+      // TODO: Custom content installation temporarily disabled
+      // // Get directory path
+      // const { customPath } = await inquirer.prompt([
+      //   {
+      //     type: 'input',
+      //     name: 'customPath',
+      //     message: 'Enter directory to search for custom content (will scan subfolders):',
+      //     default: process.cwd(),
+      //     validate: async (input) => {
+      //       if (!input || input.trim() === '') {
+      //         return 'Please enter a directory path';
+      //       }
+
+      //       // Normalize and check if path exists
+      //       const expandedPath = CLIUtils.expandPath(input.trim());
+      //       const pathExists = await fs.pathExists(expandedPath);
+      //       if (!pathExists) {
+      //         return 'Directory does not exist';
+      //       }
+
+      //       // Check if it's actually a directory
+      //       const stats = await fs.stat(expandedPath);
+      //       if (!stats.isDirectory()) {
+      //         return 'Path must be a directory';
+      //       }
+
+      //       return true;
+      //     },
+      //     transformer: (input) => {
+      //       return CLIUtils.expandPath(input);
+      //     },
+      //   },
+      // ]);
+
+      // const resolvedPath = CLIUtils.expandPath(customPath);
+
+      // // Find custom content
+      // const customHandler = new CustomHandler();
+      // const customFiles = await customHandler.findCustomContent(resolvedPath);
+
+      // if (customFiles.length === 0) {
+      //   console.log(chalk.yellow(`\nNo custom content found in ${resolvedPath}`));
+
+      //   const { tryDifferent } = await inquirer.prompt([
+      //     {
+      //       type: 'confirm',
+      //       name: 'tryDifferent',
+      //       message: 'Try a different directory?',
+      //       default: true,
+      //     },
+      //   ]);
+
+      //   if (tryDifferent) {
+      //     return await this.promptCustomContentForExisting();
+      //   }
+
+      //   return { hasCustomContent: false };
+      // }
+
+      // // Display found items
+      // console.log(chalk.cyan(`\nFound ${customFiles.length} custom content file(s):`));
+      // const customContentItems = [];
+
+      // for (const customFile of customFiles) {
+      //   const customInfo = await customHandler.getCustomInfo(customFile);
+      //   if (customInfo) {
+      //     customContentItems.push({
+      //       name: `${chalk.cyan('✓')} ${customInfo.name} ${chalk.gray(`(${customInfo.relativePath})`)}`,
+      //       value: `__CUSTOM_CONTENT__${customFile}`,
+      //       checked: true,
+      //     });
+      //   }
+      // }
+
+      // // Add option to keep existing custom content
+      // console.log(chalk.yellow('\nExisting custom modules will be preserved unless you remove them'));
+
+      // const { selectedFiles } = await inquirer.prompt([
+      //   {
+      //     type: 'checkbox',
+      //     name: 'selectedFiles',
+      //     message: 'Select custom content to add:',
+      //     choices: customContentItems,
+      //     pageSize: 15,
+      //     validate: (answer) => {
+      //       if (answer.length === 0) {
+      //         return 'You must select at least one item';
+      //       }
+      //       return true;
+      //     },
+      //   },
+      // ]);
+
+      // return {
+      //   hasCustomContent: true,
+      //   customPath: resolvedPath,
+      //   selected: true,
+      //   selectedFiles: selectedFiles,
+      // };
+    } catch (error) {
+      console.error(chalk.red('Error configuring custom content:'), error);
+      return { hasCustomContent: false };
+    }
+  }
+
+  /**
+   * Prompt user for custom content source location
+   * @returns {Object} Custom content configuration
+   */
+  async promptCustomContentSource() {
+    const customContentConfig = { hasCustomContent: true, sources: [] };
+
+    // Keep asking for more sources until user is done
+    while (true) {
+      // First ask if user wants to add another module or continue
+      if (customContentConfig.sources.length > 0) {
+        const { action } = await inquirer.prompt([
+          {
+            type: 'list',
+            name: 'action',
+            message: 'Would you like to:',
+            choices: [
+              { name: 'Add another custom module', value: 'add' },
+              { name: 'Continue with installation', value: 'continue' },
+            ],
+            default: 'continue',
+          },
+        ]);
+
+        if (action === 'continue') {
+          break;
+        }
+      }
+
+      let sourcePath;
+      let isValid = false;
+
+      while (!isValid) {
+        const { path: inputPath } = await inquirer.prompt([
+          {
+            type: 'input',
+            name: 'path',
+            message: 'Enter the path to your custom content folder (or press Enter to cancel):',
+            validate: async (input) => {
+              // Allow empty input to cancel
+              if (!input || input.trim() === '') {
+                return true; // Allow empty to exit
+              }
+
+              try {
+                // Expand the path
+                const expandedPath = this.expandUserPath(input.trim());
+
+                // Check if path exists
+                if (!(await fs.pathExists(expandedPath))) {
+                  return 'Path does not exist';
+                }
+
+                // Check if it's a directory
+                const stat = await fs.stat(expandedPath);
+                if (!stat.isDirectory()) {
+                  return 'Path must be a directory';
+                }
+
+                // Check for module.yaml in the root
+                const moduleYamlPath = path.join(expandedPath, 'module.yaml');
+                if (!(await fs.pathExists(moduleYamlPath))) {
+                  return 'Directory must contain a module.yaml file in the root';
+                }
+
+                // Try to parse the module.yaml to get the module ID
+                try {
+                  const yaml = require('yaml');
+                  const content = await fs.readFile(moduleYamlPath, 'utf8');
+                  const moduleData = yaml.parse(content);
+                  if (!moduleData.code) {
+                    return 'module.yaml must contain a "code" field for the module ID';
+                  }
+                } catch (error) {
+                  return 'Invalid module.yaml file: ' + error.message;
+                }
+
+                return true;
+              } catch (error) {
+                return 'Error validating path: ' + error.message;
+              }
+            },
+          },
+        ]);
+
+        // If user pressed Enter without typing anything, exit the loop
+        if (!inputPath || inputPath.trim() === '') {
+          // If we have no modules yet, return false for no custom content
+          if (customContentConfig.sources.length === 0) {
+            return { hasCustomContent: false };
+          }
+          return customContentConfig;
+        }
+
+        sourcePath = this.expandUserPath(inputPath);
+        isValid = true;
+      }
+
+      // Read module.yaml to get module info
+      const yaml = require('yaml');
+      const moduleYamlPath = path.join(sourcePath, 'module.yaml');
+      const moduleContent = await fs.readFile(moduleYamlPath, 'utf8');
+      const moduleData = yaml.parse(moduleContent);
+
+      // Add to sources
+      customContentConfig.sources.push({
+        path: sourcePath,
+        id: moduleData.code,
+        name: moduleData.name || moduleData.code,
+      });
+
+      console.log(chalk.green(`✓ Confirmed local custom module: ${moduleData.name || moduleData.code}`));
+    }
+
+    // Ask if user wants to add these to the installation
+    const { shouldInstall } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'shouldInstall',
+        message: `Install ${customContentConfig.sources.length} custom module(s) now?`,
+        default: true,
+      },
+    ]);
+
+    if (shouldInstall) {
+      customContentConfig.selected = true;
+      // Store paths to module.yaml files, not directories
+      customContentConfig.selectedFiles = customContentConfig.sources.map((s) => path.join(s.path, 'module.yaml'));
+      // Also include module IDs for installation
+      customContentConfig.selectedModuleIds = customContentConfig.sources.map((s) => s.id);
+    }
+
+    return customContentConfig;
   }
 }
 

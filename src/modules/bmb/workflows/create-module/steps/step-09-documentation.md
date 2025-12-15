@@ -1,10 +1,10 @@
 ---
-installed_path: '{project-root}/{bmad_folder}/bmb/workflows/create-module'
+installed_path: '{project-root}/_bmad/bmb/workflows/create-module'
 nextStepFile: '{installed_path}/steps/step-10-roadmap.md'
-modulePlanFile: '{custom_module_location}/{module_name}/module-plan-{module_name}.md'
-moduleReadmeFile: '{custom_module_location}/{module_name}/README.md'
-advancedElicitationTask: '{project-root}/{bmad_folder}/core/tasks/advanced-elicitation.xml'
-partyModeWorkflow: '{project-root}/{bmad_folder}/core/workflows/party-mode/workflow.md'
+modulePlanFile: '{bmb_creations_output_folder}/{module_name}/module-plan-{module_name}.md'
+moduleReadmeFile: '{bmb_creations_output_folder}/{module_name}/README.md'
+advancedElicitationTask: '{project-root}/_bmad/core/tasks/advanced-elicitation.xml'
+partyModeWorkflow: '{project-root}/_bmad/core/workflows/party-mode/workflow.md'
 ---
 
 # Step 9: Create Module Documentation
@@ -133,13 +133,14 @@ bmad install {module_name}
 ├── tasks/                     # Task files
 ├── templates/                 # Shared templates
 ├── data/                      # Module data
-├── _module-installer/         # Installation config
+├── _module-installer/         # Installation optional js file with custom install routine
+├── module.yaml                # yaml config and install questions
 └── README.md                  # This file
 ```
 
 ## Configuration
 
-The module can be configured in `{bmad_folder}/{module_name}/config.yaml`
+The module can be configured in `_bmad/{module_name}/config.yaml`
 
 **Key Settings:**
 
@@ -248,7 +249,7 @@ Update module-plan.md with documentation section:
 ## Documentation
 
 ### README.md Created
-- Location: {custom_module_location}/{module_name}/README.md
+- Location: {bmb_creations_output_folder}/{module_name}/README.md
 - Sections: [list of sections included]
 - Status: Complete
 

@@ -19,7 +19,7 @@ A custom agents and workflows package follows this structure:
 
 ```
 my-custom-agents/
-├── custom.yaml          # Package configuration
+├── module.yaml          # Package configuration
 ├── agents/              # Agent definitions
 │   └── my-agent/
 │       └── agent.md
@@ -30,7 +30,7 @@ my-custom-agents/
 
 #### Configuration
 
-Create a `custom.yaml` file in your package root:
+Create a `module.yaml` file in your package root:
 
 ```yaml
 code: my-custom-agents
@@ -41,11 +41,6 @@ default_selected: true
 #### Example
 
 See `/example-custom-content` for a working example of a folder with multiple random custom agents and workflows. Technically its also just a module, but you will be able to further pick and choose from this folders contents of what you do and do not want to include in a destination folder. This way, you can store all custom content source in one location and easily install it to different locations.
-
-```bash
-# The example is ready to use - just rename the config file:
-mv example-custom-content/custom.bak example-custom-content/custom.yaml
-```
 
 ### 2. Custom Modules
 
@@ -64,7 +59,7 @@ A custom module follows this structure:
 my-module/
 ├── _module-installer/
 │   ├── installer.js           # optional, when it exists it will run with module installation
-│   └── install-config.yaml    # Module installation configuration with custom question and answer capture
+├── module.yaml                # Module installation configuration with custom question and answer capture
 ├── docs/                      # Module documentation
 ├── agents/                    # Module-specific agents
 ├── workflows/                 # Module-specific workflows
@@ -77,7 +72,7 @@ my-module/
 
 #### Module Configuration
 
-The `_module-installer/install-config.yaml` file defines how your module is installed:
+The `module.yaml` file defines how your module is installed:
 
 ```yaml
 # Module metadata
@@ -98,12 +93,6 @@ my_setting:
 #### Example
 
 See `/example-custom-module` for a complete example:
-
-```bash
-# The example is ready to use - just rename the _module-installer/install-config file:
-mv example-custom-module/mwm/_module-installer/install-config.bak \
-   example-custom-module/mwm/_module-installer/install-config.yaml
-```
 
 ## Installation Process
 
@@ -128,8 +117,7 @@ If you select "Enter a directory path", the installer will prompt for the locati
 
 The installer will:
 
-- Scan the directory and all subdirectories for the presence of a `custom.yaml` file (standalone content such as agents and workflows)
-- Scan for `_module-installer/install-config.yaml` files (modules)
+- Scan for `module.yaml` files (modules)
 - Display an indication of how many installable folders it has found. Note that a project with stand along agents and workflows all under a single folder like the example will just list the count as 1 for that directory.
 
 ### Step 3: Selecting Content
@@ -147,7 +135,7 @@ The installer presents a unified selection interface:
 
 ## Agent Sidecar Support
 
-Agents with sidecar content can store personal data, memories, and working files outside of the `.bmad` directory. This separation keeps personal content separate from BMAD's core files.
+Agents with sidecar content can store personal data, memories, and working files outside of the `_bmad` directory. This separation keeps personal content separate from BMAD's core files.
 
 ### What is Sidecar Content?
 
@@ -164,7 +152,7 @@ The sidecar folder location is configured during BMAD core installation:
 
 ```
 ? Where should users' agent sidecar memory folders be stored?
-❯ .bmad-user-memory
+❯ _bmad-user-memory
 ```
 
 ### How It Works
@@ -172,7 +160,7 @@ The sidecar folder location is configured during BMAD core installation:
 1. **Agent Declaration**: Agents declare `hasSidecar: true` in their metadata
 2. **Sidecar Detection**: The installer automatically detects folders with "sidecar" in the name
 3. **Installation**: Sidecar content is copied to the configured location
-4. **Path Replacement**: The `{agent_sidecar_folder}` placeholder in agent configurations is replaced with the actual path to the installed instance of the sidecar folder. Now when you use the agent, depending on its design, will use the content in sidecar to record interactions, remember things you tell it, or serve a host of many other issues.
+4. **Path Replacement**: The `{bmad_memory}` placeholder in agent configurations is replaced with the actual path to the installed instance of the sidecar folder. Now when you use the agent, depending on its design, will use the content in sidecar to record interactions, remember things you tell it, or serve a host of many other issues.
 
 ### Example Structure
 
@@ -187,7 +175,7 @@ my-agent/
 
 ### Git Integration
 
-Since sidecar content is stored outside the `.bmad` directory (and typically outside version control), users can:
+Since sidecar content is stored outside the `_bmad` directory (and typically outside version control), users can:
 
 - Add the sidecar folder to `.gitignore` to exclude personal data
 - Share agent definitions without exposing personal content
@@ -197,7 +185,7 @@ Example `.gitignore` entry:
 
 ```
 # Exclude agent personal data
-.bmad-user-memory/
+_bmad-user-memory/
 ```
 
 ## Creating Custom Content with BMAD Builder
@@ -230,7 +218,7 @@ Custom content can be distributed:
 
 ### No Custom Content Found
 
-- Ensure your `custom.yaml` or `install-config.yaml` files are properly named
+- Ensure your `module.yaml` files are properly named
 - Check file permissions
 - Verify the directory path is correct
 
@@ -244,7 +232,7 @@ Custom content can be distributed:
 
 - Ensure the agent has `hasSidecar: true` in metadata
 - Check that sidecar folders contain "sidecar" in the name
-- Verify the agent_sidecar_folder configuration
+- Verify the bmad_memory configuration
 - Ensure the custom agent has proper language in it to actually use the sidecar content, including loading memories on agent load.
 
 ## Support

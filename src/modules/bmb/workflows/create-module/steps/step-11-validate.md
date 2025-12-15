@@ -1,9 +1,9 @@
 ---
 workflowFile: '{installed_path}/workflow.md'
-modulePlanFile: '{custom_module_location}/{module_name}/module-plan-{module_name}.md'
+modulePlanFile: '{bmb_creations_output_folder}/{module_name}/module-plan-{module_name}.md'
 validationChecklist: '{installed_path}/validation.md'
-advancedElicitationTask: '{project-root}/{bmad_folder}/core/tasks/advanced-elicitation.xml'
-partyModeWorkflow: '{project-root}/{bmad_folder}/core/workflows/party-mode/workflow.md'
+advancedElicitationTask: '{project-root}/_bmad/core/tasks/advanced-elicitation.xml'
+partyModeWorkflow: '{project-root}/_bmad/core/workflows/party-mode/workflow.md'
 ---
 
 # Step 11: Validate and Finalize Module
@@ -73,8 +73,8 @@ Expected Structure:
 ├── templates/                 [✅/❌]
 ├── data/                      [✅/❌]
 ├── _module-installer/         [✅/❌]
-│   ├── install-config.yaml   [✅/❌]
-│   └── installer.js          [✅/N/A]
+│   └── installer.js           [✅/N/A]
+├── module.yaml                [✅/❌]
 └── README.md                  [✅/❌]
 ```
 
@@ -87,7 +87,7 @@ Expected Structure:
 "**2. Configuration Files Check**"
 
 **Install Configuration:**
-Validate install-config.yaml
+Validate module.yaml
 
 - [ ] YAML syntax valid
 - [ ] Module code matches folder name
@@ -197,7 +197,7 @@ Fix issues one by one with user confirmation
 
 - **Name:** {module_display_name}
 - **Code:** {module_name}
-- **Location:** {custom_module_location}/{module_name}
+- **Location:** {bmb_creations_output_folder}/{module_name}
 - **Type:** {module_type}
 - **Status:** Ready for testing
 
@@ -297,8 +297,8 @@ Display: **Module Creation Complete!** [A] Advanced Elicitation [P] Party Mode [
 
 #### Menu Handling Logic:
 
-- IF A: Execute {project-root}/{bmad_folder}/core/tasks/advanced-elicitation.xml for reflection on process
-- IF P: Execute {project-root}/{bmad_folder}/core/workflows/party-mode/workflow.md to celebrate completion
+- IF A: Execute {project-root}/_bmad/core/tasks/advanced-elicitation.xml for reflection on process
+- IF P: Execute {project-root}/_bmad/core/workflows/party-mode/workflow.md to celebrate completion
 - IF C: Mark as complete and exit gracefully
 - IF Any other comments or queries: help user respond then redisplay menu
 

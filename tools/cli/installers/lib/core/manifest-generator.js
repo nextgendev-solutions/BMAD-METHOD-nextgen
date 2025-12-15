@@ -1,6 +1,6 @@
 const path = require('node:path');
 const fs = require('fs-extra');
-const yaml = require('js-yaml');
+const yaml = require('yaml');
 const crypto = require('node:crypto');
 const { getSourcePath, getModulePath } = require('../../../lib/project-root');
 
@@ -23,13 +23,13 @@ class ManifestGenerator {
 
   /**
    * Generate all manifests for the installation
-   * @param {string} bmadDir - BMAD installation directory
+   * @param {string} bmadDir - _bmad
    * @param {Array} selectedModules - Selected modules for installation
    * @param {Array} installedFiles - All installed files (optional, for hash tracking)
    */
   async generateManifests(bmadDir, selectedModules, installedFiles = [], options = {}) {
-    // Create _cfg directory if it doesn't exist
-    const cfgDir = path.join(bmadDir, '_cfg');
+    // Create _config directory if it doesn't exist
+    const cfgDir = path.join(bmadDir, '_config');
     await fs.ensureDir(cfgDir);
 
     // Store modules list (all modules including preserved ones)
@@ -38,12 +38,19 @@ class ManifestGenerator {
     // Scan the bmad directory to find all actually installed modules
     const installedModules = await this.scanInstalledModules(bmadDir);
 
-    // Deduplicate modules list to prevent duplicates
-    this.modules = [...new Set(['core', ...selectedModules, ...preservedModules, ...installedModules])];
-    this.updatedModules = [...new Set(['core', ...selectedModules, ...installedModules])]; // All installed modules get rescanned
-    this.preservedModules = preservedModules; // These stay as-is in CSVs
+    // Since custom modules are now installed the same way as regular modules,
+    // we don't need to exclude them from manifest generation
+    const allModules = [...new Set(['core', ...selectedModules, ...preservedModules, ...installedModules])];
+
+    this.modules = allModules;
+    this.updatedModules = allModules; // Include ALL modules (including custom) for scanning
+
+    // For CSV manifests, we need to include ALL modules that are installed
+    // preservedModules controls which modules stay as-is in the CSV (don't get rescanned)
+    // But all modules should be included in the final manifest
+    this.preservedModules = allModules; // Include ALL modules (including custom)
     this.bmadDir = bmadDir;
-    this.bmadFolderName = path.basename(bmadDir); // Get the actual folder name (e.g., '.bmad' or 'bmad')
+    this.bmadFolderName = path.basename(bmadDir); // Get the actual folder name (e.g., '_bmad' or 'bmad')
     this.allInstalledFiles = installedFiles;
 
     if (!Object.prototype.hasOwnProperty.call(options, 'ides')) {
@@ -61,14 +68,14 @@ class ManifestGenerator {
     // Collect workflow data
     await this.collectWorkflows(selectedModules);
 
-    // Collect agent data
-    await this.collectAgents(selectedModules);
+    // Collect agent data - use updatedModules which includes all installed modules
+    await this.collectAgents(this.updatedModules);
 
     // Collect task data
-    await this.collectTasks(selectedModules);
+    await this.collectTasks(this.updatedModules);
 
     // Collect tool data
-    await this.collectTools(selectedModules);
+    await this.collectTools(this.updatedModules);
 
     // Write manifest files and collect their paths
     const manifestFiles = [
@@ -138,14 +145,14 @@ class ManifestGenerator {
             let workflow;
             if (entry.name === 'workflow.yaml') {
               // Parse YAML workflow
-              workflow = yaml.load(content);
+              workflow = yaml.parse(content);
             } else {
               // Parse MD workflow with YAML frontmatter
               const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
               if (!frontmatterMatch) {
                 continue; // Skip MD files without frontmatter
               }
-              workflow = yaml.load(frontmatterMatch[1]);
+              workflow = yaml.parse(frontmatterMatch[1]);
             }
 
             // Skip template workflows (those with placeholder values)
@@ -456,14 +463,16 @@ class ManifestGenerator {
         installDate: new Date().toISOString(),
         lastUpdated: new Date().toISOString(),
       },
-      modules: this.modules,
+      modules: this.modules, // Include ALL modules (standard and custom)
       ides: this.selectedIdes,
     };
 
-    const yamlStr = yaml.dump(manifest, {
+    // Clean the manifest to remove any non-serializable values
+    const cleanManifest = structuredClone(manifest);
+
+    const yamlStr = yaml.stringify(cleanManifest, {
       indent: 2,
-      lineWidth: -1,
-      noRefs: true,
+      lineWidth: 0,
       sortKeys: false,
     });
 
@@ -561,13 +570,62 @@ class ManifestGenerator {
    */
   async writeWorkflowManifest(cfgDir) {
     const csvPath = path.join(cfgDir, 'workflow-manifest.csv');
+    const escapeCsv = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`;
+    const parseCsvLine = (line) => {
+      const columns = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || [];
+      return columns.map((c) => c.replaceAll(/^"|"$/g, ''));
+    };
 
-    // Create CSV header - removed standalone column as ALL workflows now generate commands
+    // Read existing manifest to preserve entries
+    const existingEntries = new Map();
+    if (await fs.pathExists(csvPath)) {
+      const content = await fs.readFile(csvPath, 'utf8');
+      const lines = content.split('\n').filter((line) => line.trim());
+
+      // Skip header
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i];
+        if (line) {
+          const parts = parseCsvLine(line);
+          if (parts.length >= 4) {
+            const [name, description, module, workflowPath] = parts;
+            existingEntries.set(`${module}:${name}`, {
+              name,
+              description,
+              module,
+              path: workflowPath,
+            });
+          }
+        }
+      }
+    }
+
+    // Create CSV header - standalone column removed, everything is canonicalized to 4 columns
     let csv = 'name,description,module,path\n';
 
-    // Add all workflows - no standalone property needed anymore
+    // Combine existing and new workflows
+    const allWorkflows = new Map();
+
+    // Add existing entries
+    for (const [key, value] of existingEntries) {
+      allWorkflows.set(key, value);
+    }
+
+    // Add/update new workflows
     for (const workflow of this.workflows) {
-      csv += `"${workflow.name}","${workflow.description}","${workflow.module}","${workflow.path}"\n`;
+      const key = `${workflow.module}:${workflow.name}`;
+      allWorkflows.set(key, {
+        name: workflow.name,
+        description: workflow.description,
+        module: workflow.module,
+        path: workflow.path,
+      });
+    }
+
+    // Write all workflows
+    for (const [, value] of allWorkflows) {
+      const row = [escapeCsv(value.name), escapeCsv(value.description), escapeCsv(value.module), escapeCsv(value.path)].join(',');
+      csv += row + '\n';
     }
 
     await fs.writeFile(csvPath, csv);
@@ -581,12 +639,50 @@ class ManifestGenerator {
   async writeAgentManifest(cfgDir) {
     const csvPath = path.join(cfgDir, 'agent-manifest.csv');
 
+    // Read existing manifest to preserve entries
+    const existingEntries = new Map();
+    if (await fs.pathExists(csvPath)) {
+      const content = await fs.readFile(csvPath, 'utf8');
+      const lines = content.split('\n').filter((line) => line.trim());
+
+      // Skip header
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i];
+        if (line) {
+          // Parse CSV (simple parsing assuming no commas in quoted fields)
+          const parts = line.split('","');
+          if (parts.length >= 11) {
+            const name = parts[0].replace(/^"/, '');
+            const module = parts[8];
+            existingEntries.set(`${module}:${name}`, line);
+          }
+        }
+      }
+    }
+
     // Create CSV header with persona fields
     let csv = 'name,displayName,title,icon,role,identity,communicationStyle,principles,module,path\n';
 
-    // Add all agents
+    // Combine existing and new agents, preferring new data for duplicates
+    const allAgents = new Map();
+
+    // Add existing entries
+    for (const [key, value] of existingEntries) {
+      allAgents.set(key, value);
+    }
+
+    // Add/update new agents
     for (const agent of this.agents) {
-      csv += `"${agent.name}","${agent.displayName}","${agent.title}","${agent.icon}","${agent.role}","${agent.identity}","${agent.communicationStyle}","${agent.principles}","${agent.module}","${agent.path}"\n`;
+      const key = `${agent.module}:${agent.name}`;
+      allAgents.set(
+        key,
+        `"${agent.name}","${agent.displayName}","${agent.title}","${agent.icon}","${agent.role}","${agent.identity}","${agent.communicationStyle}","${agent.principles}","${agent.module}","${agent.path}"`,
+      );
+    }
+
+    // Write all agents
+    for (const [, value] of allAgents) {
+      csv += value + '\n';
     }
 
     await fs.writeFile(csvPath, csv);
@@ -600,12 +696,47 @@ class ManifestGenerator {
   async writeTaskManifest(cfgDir) {
     const csvPath = path.join(cfgDir, 'task-manifest.csv');
 
+    // Read existing manifest to preserve entries
+    const existingEntries = new Map();
+    if (await fs.pathExists(csvPath)) {
+      const content = await fs.readFile(csvPath, 'utf8');
+      const lines = content.split('\n').filter((line) => line.trim());
+
+      // Skip header
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i];
+        if (line) {
+          // Parse CSV (simple parsing assuming no commas in quoted fields)
+          const parts = line.split('","');
+          if (parts.length >= 6) {
+            const name = parts[0].replace(/^"/, '');
+            const module = parts[3];
+            existingEntries.set(`${module}:${name}`, line);
+          }
+        }
+      }
+    }
+
     // Create CSV header with standalone column
     let csv = 'name,displayName,description,module,path,standalone\n';
 
-    // Add all tasks
+    // Combine existing and new tasks
+    const allTasks = new Map();
+
+    // Add existing entries
+    for (const [key, value] of existingEntries) {
+      allTasks.set(key, value);
+    }
+
+    // Add/update new tasks
     for (const task of this.tasks) {
-      csv += `"${task.name}","${task.displayName}","${task.description}","${task.module}","${task.path}","${task.standalone}"\n`;
+      const key = `${task.module}:${task.name}`;
+      allTasks.set(key, `"${task.name}","${task.displayName}","${task.description}","${task.module}","${task.path}","${task.standalone}"`);
+    }
+
+    // Write all tasks
+    for (const [, value] of allTasks) {
+      csv += value + '\n';
     }
 
     await fs.writeFile(csvPath, csv);
@@ -619,12 +750,47 @@ class ManifestGenerator {
   async writeToolManifest(cfgDir) {
     const csvPath = path.join(cfgDir, 'tool-manifest.csv');
 
+    // Read existing manifest to preserve entries
+    const existingEntries = new Map();
+    if (await fs.pathExists(csvPath)) {
+      const content = await fs.readFile(csvPath, 'utf8');
+      const lines = content.split('\n').filter((line) => line.trim());
+
+      // Skip header
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i];
+        if (line) {
+          // Parse CSV (simple parsing assuming no commas in quoted fields)
+          const parts = line.split('","');
+          if (parts.length >= 6) {
+            const name = parts[0].replace(/^"/, '');
+            const module = parts[3];
+            existingEntries.set(`${module}:${name}`, line);
+          }
+        }
+      }
+    }
+
     // Create CSV header with standalone column
     let csv = 'name,displayName,description,module,path,standalone\n';
 
-    // Add all tools
+    // Combine existing and new tools
+    const allTools = new Map();
+
+    // Add existing entries
+    for (const [key, value] of existingEntries) {
+      allTools.set(key, value);
+    }
+
+    // Add/update new tools
     for (const tool of this.tools) {
-      csv += `"${tool.name}","${tool.displayName}","${tool.description}","${tool.module}","${tool.path}","${tool.standalone}"\n`;
+      const key = `${tool.module}:${tool.name}`;
+      allTools.set(key, `"${tool.name}","${tool.displayName}","${tool.description}","${tool.module}","${tool.path}","${tool.standalone}"`);
+    }
+
+    // Write all tools
+    for (const [, value] of allTools) {
+      csv += value + '\n';
     }
 
     await fs.writeFile(csvPath, csv);
@@ -726,7 +892,7 @@ class ManifestGenerator {
 
       for (const entry of entries) {
         // Skip if not a directory or is a special directory
-        if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name === '_cfg') {
+        if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name === '_config') {
           continue;
         }
 
